@@ -1,0 +1,24 @@
+{
+  "name": "dsh-lumen-market",
+  "version": "0.1.0",
+  "description": "流明市场：发现 npm 与 GitHub 插件，查看介绍与文档，通过官方管线安装和原地更新。",
+  "icon": "assets/icon.svg",
+  "license": "MIT",
+  "author": "Femad-6",
+  "repository": { "type": "git", "url": "git+https://github.com/Femad-6/dsh-lumen-market.git" },
+  "homepage": "https://github.com/Femad-6/dsh-lumen-market#readme",
+  "bugs": { "url": "https://github.com/Femad-6/dsh-lumen-market/issues" },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json", "./cordis.patch.yml": "./cordis.patch.yml" },
+  "files": ["lib", "assets", "docs", "cordis.patch.yml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --test test/*.test.mjs", "preview": "node tools/preview.mjs" },
+  "dependencies": { "semver": "7.7.2" },
+  "devDependencies": { "react": "19.2.0", "react-dom": "19.2.0", "jsdom": "26.1.0", "esbuild": "0.25.10" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-layout", "@deepseek-ai/dsh-client-ui-sidebar"] }
+  },
+  "keywords": ["deepseek-harness", "dsh-plugin", "plugin-market", "github", "updates"]
+}

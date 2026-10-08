@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Lumen Market">
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1"><stop stop-color="#154c43"/><stop offset="1" stop-color="#092923"/></linearGradient>
+    <linearGradient id="mint" x2="0" y2="1"><stop stop-color="#c6fff0"/><stop offset="1" stop-color="#56cdb0"/></linearGradient>
+    <linearGradient id="gold" x2="0" y2="1"><stop stop-color="#fff4bc"/><stop offset="1" stop-color="#e6b968"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#78e6ba" stop-opacity=".25"/><stop offset="1" stop-color="#78e6ba" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#tile)"/>
+  <rect x="9" y="9" width="238" height="238" rx="53" fill="none" stroke="#6ed3b0" stroke-opacity=".24" stroke-width="2"/>
+  <circle cx="128" cy="115" r="92" fill="url(#glow)"/>
+  <path d="M108 58V48a20 20 0 0 1 40 0v10" fill="none" stroke="#a5efce" stroke-width="9" stroke-linecap="round"/>
+  <path d="M76 81 97 60h62l21 21" fill="url(#mint)"/>
+  <path d="M83 88h90l-10 90H93Z" fill="#133e34" stroke="#81dfbd" stroke-width="8" stroke-linejoin="round"/>
+  <rect x="105" y="100" width="26" height="26" rx="6" fill="url(#gold)"/>
+  <rect x="134" y="100" width="18" height="26" rx="5" fill="url(#mint)"/>
+  <rect x="105" y="133" width="47" height="24" rx="6" fill="url(#mint)"/>
+  <path d="M89 183h78l8 13H81Z" fill="url(#mint)"/>
+  <path d="m195 111 4 10 10 4-10 4-4 10-4-10-10-4 10-4Z" fill="#f6dfa1"/>
+  <path d="m58 127 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z" fill="#82e4c6"/>
+  <path d="M98 215h60" stroke="#6fc4a5" stroke-opacity=".35" stroke-width="5" stroke-linecap="round"/>
+</svg>
