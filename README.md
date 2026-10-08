@@ -1,98 +1,113 @@
-# 流明市场 · dsh-lumen-market
+# 流明市场 · Lumen Market
 
-<img src="assets/icon.svg" width="80" height="80" alt="流明市场图标" />
+<img src="assets/icon.svg" width="72" height="72" alt="流明市场图标" />
 
-一个独立的 DeepSeek Harness 插件市场：搜索 npm 和 GitHub 插件，阅读简短介绍、打开文档，经过目标查验和预览后，通过官方管理器安装或原地更新。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供一个集**插件发现、介绍、文档、安装和更新**于一体的市场。你可以搜索 npm 与 GitHub 插件，也可以查看当前已安装的本地插件。
 
-官方插件列表使用 `assets/icon.svg` 专属光灯图标；通过 package.json 顶层 icon 声明，随包发布。
+安装和更新由 DSH 官方插件管理器执行。点击确认前，市场会展示查验过的版本或 commit，以及兼容性信息。
+
+## 实机截图
+
+以下图片直接截取自运行中的 **DeepSeek Harness 桌面应用**，不是离线演示或设计稿。使用了自定义宿主主题；为保护隐私，仅裁去侧栏、会话列表和余额区域。截图中的版本和结果代表拍摄时的状态。
+
+**发现插件：查看来源、简介、版本和兼容性。**
+
+![DeepSeek Harness 中的流明市场发现页](docs/screenshots/discover.png)
+
+**插件详情：阅读完整介绍，打开项目主页、仓库和 README。**
+
+![DeepSeek Harness 中的流明市场插件详情](docs/screenshots/detail.png)
+
+## 能做什么
+
+| 功能 | 用途 |
+| --- | --- |
+| 搜索插件 | 搜索 npm 与 GitHub，或直接输入仓库地址 |
+| 了解插件 | 查看简介、完整描述和文档入口 |
+| 安装前查验 | 展示兼容性、确切版本或固定 commit |
+| 查看已安装 | 识别 npm、本地链接、Git 等不同来源 |
+| 检查更新 | 查找可更新的 npm 插件，逐项预览并原地升级 |
+| 重启提醒 | 更新后持续提示需要重启的插件 |
 
 ## 安装
 
-GitHub 仓库：<https://github.com/Femad-6/dsh-lumen-market>。仓库提交了可直接加载的 `lib/` 文件，无需构建。
+使用带有官方插件管理功能的 DeepSeek Harness。仓库已经包含可加载的 `lib/` 文件，无需自行构建。
 
-在支持仓库查验的市场中粘贴上述地址，确认后可安装固定 commit 的版本。也可以在 DSH 官方「插件」页填写 `github:Femad-6/dsh-lumen-market#<完整commit SHA>`；将占位符替换为 GitHub 上要安装的提交。
+### 在 DSH 中添加
 
-从源码本地开发：
+1. 打开侧栏 **「插件」→「添加插件」**。
+2. 填入下面的安装目标。它固定到已验证的 `0.1.0` 代码提交：
+
+   ```text
+   github:Femad-6/dsh-lumen-market#652e9286e5d21499ada26c1dd244447379a793fd
+   ```
+
+3. 确认安装，按官方管理器的提示处理构建授权或重启。
+4. 安装生效后，侧栏会出现 **「流明市场」**。
+
+如需安装其他提交，可在 [GitHub 提交列表](https://github.com/Femad-6/dsh-lumen-market/commits/main/) 中复制完整 SHA，替换安装目标末尾的 commit。
+
+### 从本地目录安装
+
+适合希望修改代码或本地测试的用户。需要 Git、Node.js 22 或更高版本，以及 npm。
 
 ```sh
 git clone https://github.com/Femad-6/dsh-lumen-market.git
 cd dsh-lumen-market
-npm ci --ignore-scripts --no-audit --no-fund
+npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 ```
 
-在 DSH 侧栏「插件」中，用以下**绝对路径**添加：
+然后在 DSH「添加插件」中输入克隆目录的**绝对路径**。例如，克隆目录是 `C:\Plugins\dsh-lumen-market`，就填写该路径。请替换为你自己的实际目录。
 
-```text
-D:\dsh-plugins\dsh-lumen-market
-```
+本地安装通常会建立 link/junction。安装后不要移动目录；修改 host 代码后，需要正常退出并重新打开 DSH。
 
-或者由 DSH 的官方工具执行：
+## 开始使用
 
-```text
-plugin_manager { action: "install_bundle", target: "D:\\dsh-plugins\\dsh-lumen-market" }
-```
+1. **找插件**：进入「发现」，输入关键词、`owner/repo` 或 GitHub 仓库根地址，选择来源后点击「搜索」。
+2. **看介绍**：点击「查看详情」，阅读描述与兼容性，使用「查看文档」了解更多。
+3. **装插件**：目标符合条件时，点击「安装预览」，核对版本或 commit，再点击「确认安装」。
+4. **查更新**：进入「已安装」或「可更新」，点击「重新检查」。有更新时，逐项预览和确认。
 
-本地路径通常成为 link/junction；不要移动已安装目录。上面的路径是 Windows 开发目录示例，请替换为你自己的克隆目录。该仓库已包含 host/client 产物，Node >=22，生产依赖只有 semver。克隆到另一台机器后，先在目录运行 `npm install --omit=dev --ignore-scripts`。host 改动需要重启 DSH，client 是否热替换取决于当前 profile 的 HMR。安装后的管理结果才是是否需要重启的依据。
+只检查或浏览不会自动安装、更新插件。待重启提示在刷新页面后仍会保留，真正重启 DSH 后才清空。
 
-侧栏显示「流明市场」。现有市场和更新中心可以保留；本插件不依赖它们，也不自动停用或卸载它们。
+## 搜索来源
 
-## 使用
+| 来源 | 搜索范围 |
+| --- | --- |
+| npm | 宿主配置的注册表；默认使用 npm 官方源，并带 npmmirror 回退 |
+| GitHub | 关键词搜索限定 `dsh-plugin` topic，按最近更新排序；直接输入仓库根地址可查验没有这个 topic 的仓库 |
+| 全部来源 | 合并 npm 与 GitHub，并在第一页显示匹配的本地已安装插件 |
 
-- **发现**：输入插件关键词，选择 npm、GitHub 或全部来源，点击搜索；筛选可安装或已安装状态。「全部来源」的第一页也包含当前 profile 中匹配的已安装插件，本地 link 插件可查看简介和文档，不提供注册表替换安装。
-- **仓库直达**：选择 GitHub，输入 `owner/repo` 或完整仓库根地址。可以查看没有 DSH topic 的仓库。
-- **查看详情**：列表显示两行简介；详情显示完整描述、版本、来源、兼容性及 README/主页/源码/npm 链接。介绍来自作者元数据；缺失时明确提示。
-- **安装**：详情查验通过后，点击「安装预览」，审阅确切版本或 commit，再「确认安装」。GitHub 搜索候选并不等于可安装插件。
-- **已安装**：显示实际来源和磁盘版本，检查最新版；失败与未知版本不当作已是最新。
-- **可更新**：仅列出符合条件的 npm 更新，逐项预览并升级。保留禁用状态，不先卸载、不改变已有启用包顺序。查询失败另有提示。
+GitHub 搜索不是全仓库扫描。搜索结果只是候选，需要打开详情完成查验，才可能提供安装按钮。
 
-更新成功后，待重启提示由 host 保留；刷新浏览器不会清空，真正重启 DSH 后清空。官方返回的构建脚本待授权、兼容性拒绝和失败诊断分别显示；本插件不会自动授权脚本或新增版本豁免。
+## 常见问题
 
-## GitHub 搜索范围与限制
+**为什么搜不到某个插件？**
 
-关键词使用 GitHub repository search，限定 `topic:dsh-plugin`，按最近更新排序。它不是全 GitHub 扫描。精确仓库地址绕过 topic 限制。每页 20 项，公开 GitHub 搜索最多覆盖 1000 项。
+检查来源和筛选条件。找本地安装的插件时，选择「全部来源」并关闭「仅可安装」，或者进入「已安装」。找 GitHub 项目时，包名可能与仓库名不同；直接输入完整仓库地址更准确。网络失败、限流或注册表尚未收录也会影响结果。
 
-npm 搜索使用官方管理器解析出的注册表配置，默认 npm 官方源及 npmmirror 回退。它与本地 profile 搜索是不同来源：仅选择 npm 或 GitHub 时，不包含本地目录。找本地 dsh-moonpet 时选择「全部来源」，关闭「仅可安装」，搜索 moonpet；或直接进入「已安装」。其仓库元数据指向 `https://github.com/Femad-6/deepseek-moonpet`，仓库名称与 npm 包名并不相同。
+**为什么显示“未验证”，没有安装按钮？**
 
-打开详情才读取默认分支 commit，固定完整 SHA，检查根 package.json、bundle patch、入口及相对 exports 文件。只支持根目录单包插件。缺少编译文件、危险/通配符导出路径、无法完整查验、仅客户端包或不兼容目标不会提供安装按钮。静态文件检查不能保证运行成功；官方管理器负责最终安装与运行时预检。
+首版只直接安装仓库根目录的单包插件。缺少 DSH 声明、缺少构建产物、导出路径无法完整查验或不兼容时，会显示原因。只有客户端模块、monorepo 子包和无法固定 commit 的目标也不会直接安装。静态查验不能保证插件运行成功，最终结果仍由官方管理器决定。
 
-安装 spec 为 `github:owner/repo#<40位SHA>`；npm spec 为 `<包名>@<确切版本>`。本地 link/file、Git、tarball 和 npm 别名不提供按包名更新按钮，也不追踪已安装 Git 依赖的新 commit。
+**为什么本地链接和 Git 插件没有升级按钮？**
 
-匿名 GitHub 可用；限流时显示重试时间并停止请求，不循环重试。如需要提高配额，可在启动 host 的环境里明确设置 `DSH_LUMEN_MARKET_GITHUB_TOKEN`。仅发送到固定 GitHub API 主机，token 不持久化、不返回浏览器、不读取其它工具的 token。
+按 npm 包名升级会替换原来的安装来源，因此只对符合条件的 npm 依赖提供更新。本地 link/file、Git、压缩包和 npm 别名不会被转换成注册表安装，也不会自动追踪新的 Git commit。
 
-搜索/清单缓存为进程内存，分别 5/15 分钟，最多 500 条；查验 ID 有效 10 分钟、最多 200 条且只能执行一次。GitHub 单次查验最多 12 请求，并发 3，每请求 10 秒；响应与 body 有大小上限。重启不留下缓存文件。
+**安装或更新失败怎么办？**
 
-## HTTP 与排查
+查看页面错误和官方管理器的诊断。兼容性拒绝会说明不满足的 peer 范围；构建脚本授权也由官方处理。市场不会自动授权脚本、写入兼容性豁免或重试安装。若提示 profile 定位异常，可点击页面底部「诊断」查看原因；分享诊断前请检查路径等个人信息。
 
-前缀 `/api/lumen-market`，每次请求必须带 `x-dsh-lumen-market: 1`。写入仅允许回环地址；自定义头是 CSRF 防护，并非身份鉴权。没有远程写入开关。
+**GitHub 限流怎么办？**
 
-```powershell
-Invoke-RestMethod 'http://127.0.0.1:19387/api/lumen-market/health' -Headers @{ 'x-dsh-lumen-market' = '1' }
-```
+等待页面显示的重试时间。匿名查询可用；需要提高配额时，可以在启动宿主的环境中设置专用变量 `DSH_LUMEN_MARKET_GITHUB_TOKEN`，具体说明见开发文档。不要将 token 放进仓库或截图。
 
-面板「诊断」显示 host 进程、profile 定位及管理服务状态。找不到 profile 时回报被否掉的候选。端口取决于实际 DSH 启动配置；以上是当前桌面使用过的地址示例。浏览器 HTTP/JS 错误与 host 安装结果需分别排查。
+## 开发与反馈
 
-GET：`/search`、`/detail`、`/installed`、`/updates`、`/health`。POST：`/inspect`、`/install`、`/upgrade`。执行端只接受 host 的 previewId；不接受客户端任意安装命令或 URL。
+开发命令、接口和验证说明见 [开发文档](docs/DEVELOPMENT.md) 与 [验证摘要](docs/VALIDATION.md)。离线预览使用模拟 API，实机截图来自桌面应用；当前没有通过自动化执行真实插件升级或失败回滚验收。
 
-## 开发与验证
+遇到问题可提交 [Issue](https://github.com/Femad-6/dsh-lumen-market/issues)，附上 DSH 版本、操作步骤和去除敏感信息后的截图。
 
-```powershell
-npm install --ignore-scripts --no-audit --no-fund
-npm test
-npm run preview
-node tools/smoke.mjs
-npm pack --dry-run
-```
+## 许可证
 
-`preview` 在 `http://127.0.0.1:19408` 提供离线演示：真实 React 与本插件真实客户端，API 和安装结果均为模拟数据，不连接桌面 profile。关闭启动终端即可停止。开发机的 `verification/` 是本地验证记录目录，不上传到 GitHub；测试与预览不进入 npm 发布文件。
-
-测试覆盖来源保护、兼容性完整 semver、缓存、GitHub SHA/文件/限流、安装预览、操作串行化、禁用状态保留、来源变更、失败判定、真实 HTTP、双语及真实 React 点击。官方 parser 契约测试仅在本机 `D:/Deepseek Harness` 源码存在时运行，其他机器会明确跳过。
-
-公开验证摘要见 [docs/VALIDATION.md](docs/VALIDATION.md)。本地完整日志和截图保留在开发机。离线测试和预览不能替代真实 DSH 加载及安装验收；本插件已收到本地安装后的界面反馈，但没有通过自动化执行真实插件升级或失败回滚验收。
-
-## 文件结构
-
-`lib/index.js` 装配 Cordis；`lib/host/` 包含 profile、npm、GitHub、兼容性、协调与路由；`lib/client.js` 通过 DSH classic module loader 装载。没有工具注册，也没有注入系统提示词。
-
-## License
-
-MIT。第三方依赖归属见 THIRD_PARTY_NOTICES.md。
+MIT。第三方依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
