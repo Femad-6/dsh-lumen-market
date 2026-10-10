@@ -1,6 +1,8 @@
 # 流明市场 · Lumen Market
 
-<img src="assets/icon.svg" width="72" height="72" alt="流明市场图标" />
+<img src="https://raw.githubusercontent.com/Femad-6/dsh-lumen-market/main/assets/icon.svg" width="72" height="72" alt="流明市场图标" />
+
+[npm 包](https://www.npmjs.com/package/dsh-lumen-market) · [GitHub 源码](https://github.com/Femad-6/dsh-lumen-market) · [问题反馈](https://github.com/Femad-6/dsh-lumen-market/issues)
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供一个集**插件发现、介绍、文档、安装和更新**于一体的市场。你可以搜索 npm 与 GitHub 插件，也可以查看当前已安装的本地插件。
 
@@ -12,11 +14,11 @@
 
 **发现插件：查看来源、简介、版本和兼容性。**
 
-![DeepSeek Harness 中的流明市场发现页](docs/screenshots/discover.png)
+![DeepSeek Harness 中的流明市场发现页](https://raw.githubusercontent.com/Femad-6/dsh-lumen-market/main/docs/screenshots/discover.png)
 
 **插件详情：阅读完整介绍，打开项目主页、仓库和 README。**
 
-![DeepSeek Harness 中的流明市场插件详情](docs/screenshots/detail.png)
+![DeepSeek Harness 中的流明市场插件详情](https://raw.githubusercontent.com/Femad-6/dsh-lumen-market/main/docs/screenshots/detail.png)
 
 ## 能做什么
 
@@ -31,21 +33,47 @@
 
 ## 安装
 
-使用带有官方插件管理功能的 DeepSeek Harness。仓库已经包含可加载的 `lib/` 文件，无需自行构建。
+使用带有官方插件管理功能的 DeepSeek Harness。插件已发布到 npm，包和仓库均包含可加载的 `lib/` 文件，无需自行构建。
 
-### 在 DSH 中添加
+### 推荐：在 DSH 中通过 npm 包名安装
 
 1. 打开侧栏 **「插件」→「添加插件」**。
-2. 填入下面的安装目标。它固定到已验证的 `0.1.0` 代码提交：
+2. 填入下面的 npm 安装目标：
 
    ```text
-   github:Femad-6/dsh-lumen-market#652e9286e5d21499ada26c1dd244447379a793fd
+   dsh-lumen-market@0.1.0
    ```
 
 3. 确认安装，按官方管理器的提示处理构建授权或重启。
 4. 安装生效后，侧栏会出现 **「流明市场」**。
 
-如需安装其他提交，可在 [GitHub 提交列表](https://github.com/Femad-6/dsh-lumen-market/commits/main/) 中复制完整 SHA，替换安装目标末尾的 commit。
+需要其他版本时，可在 [npm 版本页面](https://www.npmjs.com/package/dsh-lumen-market?activeTab=versions) 确认版本号，再填写 `dsh-lumen-market@版本号`。
+
+也可以让 DSH 使用官方管理工具完成安装：
+
+```text
+plugin_manager { action: "install_bundle", target: "dsh-lumen-market@0.1.0" }
+```
+
+### 可选：用 npm 下载到普通项目目录
+
+需要 Node.js 22 或更高版本和 npm。在普通项目目录运行：
+
+```sh
+npm install dsh-lumen-market@0.1.0 --ignore-scripts --registry=https://registry.npmjs.org
+```
+
+这会将包下载到当前项目的 `node_modules/dsh-lumen-market`，不会自动在 DSH 中激活。要在 DSH 中使用，推荐通过上面的官方插件管理器安装；不要直接在 DSH 的 profile 目录执行 npm 安装。
+
+### 可选：从 GitHub 安装指定提交
+
+在 DSH 官方「添加插件」中填写：
+
+```text
+github:Femad-6/dsh-lumen-market#652e9286e5d21499ada26c1dd244447379a793fd
+```
+
+此示例固定到已验证的 `0.1.0` 代码提交。其他提交可在 [GitHub 提交列表](https://github.com/Femad-6/dsh-lumen-market/commits/main/) 复制完整 SHA 并替换末尾的 commit。GitHub 来源不会获得 npm 来源的按包名更新按钮。
 
 ### 从本地目录安装
 
@@ -104,10 +132,10 @@ GitHub 搜索不是全仓库扫描。搜索结果只是候选，需要打开详�
 
 ## 开发与反馈
 
-开发命令、接口和验证说明见 [开发文档](docs/DEVELOPMENT.md) 与 [验证摘要](docs/VALIDATION.md)。离线预览使用模拟 API，实机截图来自桌面应用；当前没有通过自动化执行真实插件升级或失败回滚验收。
+开发命令、接口和验证说明见 [开发文档](https://github.com/Femad-6/dsh-lumen-market/blob/main/docs/DEVELOPMENT.md) 与 [验证摘要](https://github.com/Femad-6/dsh-lumen-market/blob/main/docs/VALIDATION.md)。离线预览使用模拟 API，实机截图来自桌面应用；当前没有通过自动化执行真实插件升级或失败回滚验收。
 
 遇到问题可提交 [Issue](https://github.com/Femad-6/dsh-lumen-market/issues)，附上 DSH 版本、操作步骤和去除敏感信息后的截图。
 
 ## 许可证
 
-MIT。第三方依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+MIT。第三方依赖说明见 [THIRD_PARTY_NOTICES.md](https://github.com/Femad-6/dsh-lumen-market/blob/main/THIRD_PARTY_NOTICES.md)。
