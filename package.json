@@ -1,6 +1,6 @@
 {
   "name": "dsh-lumen-market",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "流明市场：发现 npm 与 GitHub 插件，查看介绍与文档，通过官方管线安装和原地更新。",
   "icon": "assets/icon.svg",
   "license": "MIT",
@@ -11,9 +11,9 @@
   "type": "module",
   "main": "lib/index.js",
   "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json", "./cordis.patch.yml": "./cordis.patch.yml" },
-  "files": ["lib", "assets", "docs", "cordis.patch.yml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "files": ["lib", "assets", "docs", "cordis.patch.yml", "README.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
   "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test test/*.test.mjs", "preview": "node tools/preview.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs", "check": "node tools/check.mjs", "preview": "node tools/preview.mjs" },
   "dependencies": { "semver": "7.7.2" },
   "devDependencies": { "react": "19.2.0", "react-dom": "19.2.0", "jsdom": "26.1.0", "esbuild": "0.25.10" },
   "dsh": {

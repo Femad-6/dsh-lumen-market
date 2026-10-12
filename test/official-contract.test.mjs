@@ -4,8 +4,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import vm from 'node:vm'
 import { transform } from 'esbuild'
-const source='D:/Deepseek Harness/packages/boot/plugin-manager/src/install-spec.ts'
-test('installed official parser accepts exact github commit spec',{skip:!existsSync(source)},async()=>{
+const source=process.env.DSH_PLUGIN_MANAGER_SOURCE
+test('installed official parser accepts exact github commit spec',{skip:!source?'set DSH_PLUGIN_MANAGER_SOURCE to the official install-spec.ts':false},async()=>{
+  assert.equal(existsSync(source),true,'DSH_PLUGIN_MANAGER_SOURCE must name an existing file')
   const result=await transform(readFileSync(source,'utf8'),{loader:'ts',format:'cjs',target:'node22'})
   const module={exports:{}}
   vm.runInNewContext(result.code,{module,exports:module.exports,require:createRequire(import.meta.url)})

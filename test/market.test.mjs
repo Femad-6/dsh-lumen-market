@@ -103,3 +103,82 @@ test('all-source search includes matching locally linked installs without offeri
   assert.equal((await market.search({q:'not-matching',source:'all'})).rows.some(r=>r.name==='dsh-moonpet'),false)
   assert.equal((await market.search({q:'moonpet',source:'npm'})).rows.some(r=>r.id==='installed:dsh-moonpet'),false)
 })
+
+test('installed list returns disk data without performing remote version lookups',async()=>{
+  const {market,npm}=setup({installed:[{id:'installed:demo',name:'demo',source:'registry',installed:'1.0.0'}]})
+  let lookups=0;npm.detail=async()=>{lookups++;throw new Error('remote must not block local data')}
+  const data=await market.installed()
+  assert.equal(data.rows[0].name,'demo');assert.equal(data.rows[0].verdict,'unchecked')
+  assert.equal(lookups,0)
+})
+
+test('explicit discover refresh invalidates both sources and uses filtered hasMore',async()=>{
+  const {market,npm}=setup();let npmCleared=0,gitCleared=0
+  npm.clear=()=>npmCleared++;market.github.clear=()=>gitCleared++
+  npm.search=async()=>({rows:[],total:1000,hasMore:false,scanLimited:true,page:1})
+  const data=await market.search({q:'plugin tools',force:true})
+  assert.equal(npmCleared,1);assert.equal(gitCleared,1)
+  assert.equal(data.hasMore,false);assert.equal(data.sources.npm.scanLimited,true)
+})
+
+test('market passes star sorting to GitHub and preserves the upstream order',async()=>{
+  const {market}=setup();let received
+  market.github.search=async(q,page,options)=>{received={q,page,options};return {rows:[{id:'github:bob/high',repo:'bob/high',name:'bob/high',source:'github',stars:400},{id:'github:alice/low',repo:'alice/low',name:'alice/low',source:'github',stars:3}],total:40,page,sort:options?.sort}}
+  const result=await market.search({q:'market',source:'github',page:2,sort:'stars'})
+  assert.deepEqual(received,{q:'market',page:2,options:{sort:'stars'}})
+  assert.deepEqual(result.rows.map(row=>row.stars),[400,3]);assert.equal(result.sort,'stars')
+})
+
+test('market refuses unsupported sorting and star sorting outside GitHub scope',async()=>{
+  const {market}=setup()
+  await assert.rejects(market.search({source:'github',sort:'arbitrary'}),/invalid-sort/)
+  await assert.rejects(market.search({source:'all',sort:'stars'}),/github-sort-required/)
+})
+
+test('cancelling remote revalidation prevents the official installation from starting',async()=>{
+  const {market,npm,calls}=setup()
+  const preview=await market.inspect({source:'npm',name:'demo'})
+  assert.equal(typeof market.operation,'function')
+  const original=npm.detail;let release
+  npm.detail=async(...args)=>{await new Promise(r=>release=r);return original(...args)}
+  const active=market.execute('install',{previewId:preview.previewId})
+  const operation=market.operation({previewId:preview.previewId}).operation
+  assert.equal(operation.phase,'checking')
+  await market.cancel({operationId:operation.operationId})
+  release();const result=await active
+  assert.equal(result.application,'cancelled');assert.equal(result.ok,false)
+  assert.deepEqual(calls,[]);assert.equal(market.busy,false)
+})
+
+test('official progress is bound to the active request and cancellation awaits its result',async()=>{
+  const {market}=setup();const preview=await market.inspect({source:'npm',name:'demo'})
+  assert.equal(typeof market.progress,'function')
+  let release,requestId
+  market.manager().installBundle=async(spec,options)=>{requestId=options.requestId;return new Promise(r=>release=r)}
+  market.manager().cancelInstall=async id=>{assert.equal(id,requestId);release({application:'cancelled',changed:false});return {status:'cancelled'}}
+  const active=market.execute('install',{previewId:preview.previewId})
+  while(!release)await new Promise(r=>setImmediate(r))
+  market.progress({requestId:'unrelated',phase:'applying'})
+  assert.equal(market.operation({previewId:preview.previewId}).operation.phase,'installing')
+  market.progress({requestId,phase:'installing',attempt:{registry:'https://u:secret@registry.example',index:1,total:2}})
+  const op=market.operation({previewId:preview.previewId}).operation
+  assert.equal(op.attempt.registry,'https://[redacted]@registry.example')
+  assert.equal(market.operation({previewId:'another-preview'}).operation,null)
+  await assert.rejects(market.cancel({operationId:'unrelated'}),/operation-not-found/)
+  assert.equal((await market.cancel({operationId:op.operationId})).status,'cancelled')
+  assert.equal((await active).application,'cancelled')
+})
+
+test('too-late cancellation never changes a successful application into cancelled',async()=>{
+  const {market}=setup();const preview=await market.inspect({source:'npm',name:'demo'})
+  assert.equal(typeof market.cancel,'function')
+  let release
+  market.manager().installBundle=()=>new Promise(r=>release=r)
+  market.manager().cancelInstall=async()=>({status:'too-late'})
+  const active=market.execute('install',{previewId:preview.previewId})
+  while(!release)await new Promise(r=>setImmediate(r))
+  const operation=market.operation({previewId:preview.previewId}).operation
+  assert.equal((await market.cancel({operationId:operation.operationId})).status,'too-late')
+  release({application:'applied',changed:true})
+  assert.equal((await active).ok,true)
+})

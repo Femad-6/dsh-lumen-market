@@ -8,6 +8,8 @@
 
 安装和更新由 DSH 官方插件管理器执行。点击确认前，市场会展示查验过的版本或 commit，以及兼容性信息。
 
+当前源码版本为 **0.3.1**，更新内容见 [更新记录](CHANGELOG.md)。可通过 npm `dsh-lumen-market@0.3.1`、GitHub `v0.3.1` 标签或本地目录安装。npm 安装前也可在版本页面核对发布状态。
+
 ## 实机截图
 
 以下图片直接截取自运行中的 **DeepSeek Harness 桌面应用**，不是离线演示或设计稿。使用了自定义宿主主题；为保护隐私，仅裁去侧栏、会话列表和余额区域。截图中的版本和结果代表拍摄时的状态。
@@ -25,11 +27,13 @@
 | 功能 | 用途 |
 | --- | --- |
 | 搜索插件 | 搜索 npm 与 GitHub，或直接输入仓库地址 |
+| 按星标排序 | 选择「GitHub 星标最多」，从高到低浏览 GitHub 候选 |
 | 了解插件 | 查看简介、完整描述和文档入口 |
 | 安装前查验 | 展示兼容性、确切版本或固定 commit |
 | 查看已安装 | 识别 npm、本地链接、Git 等不同来源 |
 | 检查更新 | 查找可更新的 npm 插件，逐项预览并原地升级 |
 | 重启提醒 | 更新后持续提示需要重启的插件 |
+| 安装进度与取消 | 查看查验、下载和应用阶段；支持的宿主可取消正在安装的目标 |
 
 ## 安装
 
@@ -41,7 +45,7 @@
 2. 填入下面的 npm 安装目标：
 
    ```text
-   dsh-lumen-market@0.1.0
+   dsh-lumen-market@0.3.1
    ```
 
 3. 确认安装，按官方管理器的提示处理构建授权或重启。
@@ -52,7 +56,7 @@
 也可以让 DSH 使用官方管理工具完成安装：
 
 ```text
-plugin_manager { action: "install_bundle", target: "dsh-lumen-market@0.1.0" }
+plugin_manager { action: "install_bundle", target: "dsh-lumen-market@0.3.1" }
 ```
 
 ### 可选：用 npm 下载到普通项目目录
@@ -60,20 +64,20 @@ plugin_manager { action: "install_bundle", target: "dsh-lumen-market@0.1.0" }
 需要 Node.js 22 或更高版本和 npm。在普通项目目录运行：
 
 ```sh
-npm install dsh-lumen-market@0.1.0 --ignore-scripts --registry=https://registry.npmjs.org
+npm install dsh-lumen-market@0.3.1 --ignore-scripts --registry=https://registry.npmjs.org
 ```
 
 这会将包下载到当前项目的 `node_modules/dsh-lumen-market`，不会自动在 DSH 中激活。要在 DSH 中使用，推荐通过上面的官方插件管理器安装；不要直接在 DSH 的 profile 目录执行 npm 安装。
 
-### 可选：从 GitHub 安装指定提交
+### 从 GitHub 安装 0.3.1
 
 在 DSH 官方「添加插件」中填写：
 
 ```text
-github:Femad-6/dsh-lumen-market#652e9286e5d21499ada26c1dd244447379a793fd
+github:Femad-6/dsh-lumen-market#v0.3.1
 ```
 
-此示例固定到已验证的 `0.1.0` 代码提交。其他提交可在 [GitHub 提交列表](https://github.com/Femad-6/dsh-lumen-market/commits/main/) 复制完整 SHA 并替换末尾的 commit。GitHub 来源不会获得 npm 来源的按包名更新按钮。
+此示例使用本次版本标签。需要完整 commit SHA 时，可在 [GitHub 提交列表](https://github.com/Femad-6/dsh-lumen-market/commits/main/) 复制对应提交的完整 SHA，并替换末尾的 `v0.3.1`。流明市场内的 GitHub 安装预览仍会将仓库查验结果固定到完整 SHA。GitHub 来源不会获得 npm 来源的按包名更新按钮。
 
 ### 从本地目录安装
 
@@ -96,6 +100,16 @@ npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 3. **装插件**：目标符合条件时，点击「安装预览」，核对版本或 commit，再点击「确认安装」。
 4. **查更新**：进入「已安装」或「可更新」，点击「重新检查」。有更新时，逐项预览和确认。
 
+「已安装」会先显示本地列表，再在后台查询更新。三个标签页的「重新检查」都会请求新数据；发现页的筛选条件不会影响已安装列表。输入完整 npm 包名时，市场优先直接查询该包，减少关键词搜索漏收录的影响。
+
+发现页的「排序」可以选择 **「GitHub 星标最多」**，会自动切换到 GitHub 来源并回到第一页。仓库按星标数从高到低排列，翻页和重新检查会保持排序；卡片与详情展示取得的 GitHub 星标数。切换到 npm 或全部来源时恢复默认排序，星标排序仍遵守页面提示的 GitHub 搜索范围。
+
+星标数当前只显示在 GitHub 来源结果中；npm、本地链接和已安装项尚未补查关联仓库的星标数，因此这些卡片不显示 star。
+
+宽屏下，右侧详情会随列表滚动保持可见，点击列表下方的插件无需返回页面顶部。长详情可在面板内独立滚动，切换插件后从新详情顶部开始阅读；窄屏则在列表上方展示详情并自动定位。
+
+安装期间会显示官方管理器报告的阶段。出现「取消操作」时可以发起取消；市场会等待安装进程结束和文件恢复后的最终结果。已经进入应用阶段时可能无法取消。安装失败时可展开「安装诊断」，查看失败分类、已脱敏的输出及待授权的构建提示。
+
 只检查或浏览不会自动安装、更新插件。待重启提示在刷新页面后仍会保留，真正重启 DSH 后才清空。
 
 ## 搜索来源
@@ -107,6 +121,8 @@ npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 | 全部来源 | 合并 npm 与 GitHub，并在第一页显示匹配的本地已安装插件 |
 
 GitHub 搜索不是全仓库扫描。搜索结果只是候选，需要打开详情完成查验，才可能提供安装按钮。
+
+npm 分页按查验后的候选显示，每页最多 20 项。为控制等待时间，每次最多扫描 3 页原始候选；达到上限会明确提示缩小关键词，不把原始搜索数量当成已验证插件总数。
 
 ## 常见问题
 
@@ -132,7 +148,7 @@ GitHub 搜索不是全仓库扫描。搜索结果只是候选，需要打开详�
 
 ## 开发与反馈
 
-开发命令、接口和验证说明见 [开发文档](https://github.com/Femad-6/dsh-lumen-market/blob/main/docs/DEVELOPMENT.md) 与 [验证摘要](https://github.com/Femad-6/dsh-lumen-market/blob/main/docs/VALIDATION.md)。离线预览使用模拟 API，实机截图来自桌面应用；当前没有通过自动化执行真实插件升级或失败回滚验收。
+开发命令、接口和验证说明见 [开发文档](https://github.com/Femad-6/dsh-lumen-market/blob/main/docs/DEVELOPMENT.md) 与 [验证摘要](https://github.com/Femad-6/dsh-lumen-market/blob/main/docs/VALIDATION.md)。隔离集成测试使用真实临时 profile 文件和 HTTP，但安装器是模拟实现；真实桌面升级与回滚仍按 [实机验收步骤](docs/MANUAL-ACCEPTANCE.md) 单独检查。离线预览使用模拟 API，实机截图来自桌面应用。
 
 遇到问题可提交 [Issue](https://github.com/Femad-6/dsh-lumen-market/issues)，附上 DSH 版本、操作步骤和去除敏感信息后的截图。
 

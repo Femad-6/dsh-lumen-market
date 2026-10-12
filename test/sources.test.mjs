@@ -12,7 +12,7 @@ function githubFixture({pkg=manifest,missing,rate=false}={}) {
     urls.push([url,init.headers]);assert.ok(url.startsWith('https://api.github.com/'))
     if(rate)return json({},429,{'retry-after':'60'})
     if(url.includes('/search/'))return json({total_count:1,items:[{full_name:'alice/demo',description:'A description',default_branch:'main',stargazers_count:2}]})
-    if(url.endsWith('/repos/alice/demo'))return json({full_name:'alice/demo',default_branch:'main'})
+    if(url.endsWith('/repos/alice/demo'))return json({full_name:'alice/demo',default_branch:'main',stargazers_count:2})
     if(url.includes('/commits/'))return json({sha})
     const path=decodeURIComponent(url.split('/contents/')[1]?.split('?')[0]??'')
     assert.ok(url.includes(`ref=${sha}`),'all files must use the pinned commit')
@@ -24,11 +24,71 @@ function githubFixture({pkg=manifest,missing,rate=false}={}) {
 test('npm verifies candidates and falls back from unreachable source',async()=>{
   const http=new HTTP({fetchImpl:async url=>{
     if(url.startsWith('https://dead.example'))throw new Error('unreachable')
+    if(url.endsWith('/demo/latest'))return json({},404)
     return json(url.includes('/-/v1/search')?{objects:[{package:{name:'dsh-demo'}}],total:1}:manifest)
   }})
   const npm=new NpmSource({http,registries:async()=>['https://dead.example','https://registry.npmjs.org']})
   const r=await npm.search('demo',1)
   assert.equal(r.rows[0].validation,'bundle');assert.equal(r.rows[0].version,'1.0.0');assert.equal(r.rows[0].description,'Small useful plugin')
+})
+
+test('npm shares registry configuration across a cold page and reloads it after clear',async()=>{
+  let registryCalls=0
+  const npm=new NpmSource({registries:async()=>{registryCalls++;return ['https://mock.invalid']},http:{json:async url=>{
+    if(url.includes('/-/v1/search'))return {total:20,objects:Array.from({length:20},(_,i)=>({package:{name:`dsh-item-${i}`}}))}
+    return {...manifest,name:decodeURIComponent(new URL(url).pathname.split('/')[1])}
+  }}})
+  const found=await npm.search('plugin tools')
+  assert.equal(found.rows.length,20)
+  assert.equal(registryCalls,1)
+  npm.clear();await npm.detail('dsh-fresh')
+  assert.equal(registryCalls,2)
+})
+
+test('npm exact package lookup succeeds even when keyword search omits the package',async()=>{
+  const npm=new NpmSource({http:{json:async url=>url.includes('/-/v1/search')?{objects:[],total:0}:manifest}})
+  const found=await npm.search('dsh-demo')
+  assert.equal(found.rows[0]?.name,'dsh-demo')
+  assert.equal(found.coverage,'npm-exact-package')
+  assert.equal(found.hasMore,false)
+})
+
+test('npm pagination counts matching candidates and skips non-plugin raw pages',async()=>{
+  const raw=Array.from({length:42},(_,i)=>({package:{name:`dsh-result-${i}`}}))
+  const npm=new NpmSource({http:{json:async url=>{
+    const u=new URL(url)
+    if(u.pathname==='/-/v1/search'){const from=Number(u.searchParams.get('from'));return {objects:raw.slice(from,from+20),total:42}}
+    const name=decodeURIComponent(u.pathname.split('/')[1]),index=Number(name.split('-').at(-1))
+    return {name,version:'1.0.0',...(index>=20?{dsh:manifest.dsh}:{})}
+  }}})
+  const first=await npm.search('plugin tools',1),second=await npm.search('plugin tools',2)
+  assert.equal(first.rows.length,20)
+  assert.equal(first.hasMore,true)
+  assert.deepEqual(second.rows.map(r=>r.name),['dsh-result-40','dsh-result-41'])
+  assert.equal(second.hasMore,false)
+})
+
+test('npm bounded empty scans report uncertainty without a misleading next page',async()=>{
+  let searches=0
+  const npm=new NpmSource({http:{json:async url=>{
+    const u=new URL(url)
+    if(u.pathname==='/-/v1/search'){searches++;const from=Number(u.searchParams.get('from'));return {objects:Array.from({length:20},(_,i)=>({package:{name:`ordinary-${from+i}`}})),total:1000}}
+    return {name:decodeURIComponent(u.pathname.split('/')[1]),version:'1.0.0'}
+  }}})
+  const found=await npm.search('ordinary tools')
+  assert.deepEqual(found.rows,[])
+  assert.equal(found.hasMore,false)
+  assert.equal(found.scanLimited,true)
+  assert.equal(searches,3)
+})
+
+test('contradictory empty and short npm pages never establish an exact total',async()=>{
+  for(const objects of [[],[{package:{name:'dsh-demo'}}]]){
+    const npm=new NpmSource({http:{json:async url=>url.includes('/-/v1/search')?{objects,total:100}:manifest}})
+    const found=await npm.search('plugin tools')
+    assert.equal(found.rows.length,objects.length)
+    assert.equal(found.totalExact,false);assert.equal(found.incomplete,true);assert.equal(found.hasMore,false)
+  }
 })
 test('npm refuses incorrect manifest identity or floating version',async()=>{
   for(const pkg of [{...manifest,name:'wrong'},{...manifest,version:'latest'}]){
@@ -57,6 +117,38 @@ test('GitHub checks artifacts on a fixed SHA and returns corresponding documenta
   const row=await source.detail('alice/demo')
   assert.equal(row.validation,'bundle');assert.equal(row.spec,`github:alice/demo#${sha}`)
   assert.equal(row.links.readme,`https://github.com/alice/demo/tree/${sha}`)
+})
+
+test('GitHub star sorting reaches the API and has separate caches across orders and pages',async()=>{
+  const urls=[]
+  const source=new GithubSource({http:{json:async url=>{
+    const u=new URL(url);urls.push(u)
+    const popular={full_name:'bob/popular',stargazers_count:400},recent={full_name:'alice/recent',stargazers_count:3}
+    return {total_count:40,items:u.searchParams.get('sort')==='stars'?[popular,recent]:[recent,popular]}
+  }}})
+  const recent=await source.search('market',1),stars=await source.search('market',1,{sort:'stars'})
+  assert.equal(recent.rows[0].repo,'alice/recent');assert.equal(stars.rows[0].repo,'bob/popular')
+  assert.deepEqual(stars.rows.map(row=>row.stars),[400,3])
+  await source.search('market',1,{sort:'stars'});assert.equal(urls.length,2)
+  await source.search('market',2,{sort:'stars'})
+  assert.equal(urls.at(-1).searchParams.get('sort'),'stars');assert.equal(urls.at(-1).searchParams.get('order'),'desc')
+  assert.equal(urls.at(-1).searchParams.get('page'),'2');assert.equal(stars.sort,'stars')
+})
+
+test('GitHub detail retains its observed star count after manifest verification',async()=>{
+  const {source}=githubFixture()
+  assert.equal((await source.detail('alice/demo')).stars,2)
+})
+
+test('GitHub rejects unsupported sort values before requesting the API',async()=>{
+  const {source}=githubFixture()
+  await assert.rejects(source.search('market',1,{sort:'arbitrary'}),/invalid-sort/)
+})
+
+test('missing or malformed GitHub stars are unknown rather than fabricated zeroes',()=>{
+  const source=new GithubSource()
+  for(const count of [undefined,-1,2.5,'42'])assert.equal(source.candidate({full_name:'alice/demo',stargazers_count:count}).stars,null)
+  assert.equal(source.candidate({full_name:'alice/demo',stargazers_count:0}).stars,0)
 })
 test('GitHub missing compiled client blocks install qualification',async()=>{
   const {source}=githubFixture({missing:'lib/client.js'})

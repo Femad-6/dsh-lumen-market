@@ -22,6 +22,26 @@ test('application determines success and cancelled is never success', () => {
   assert.equal(normalizeResult({application:'cancelled'}).ok, false)
   assert.equal(normalizeResult({application:'restart-required',changed:true}).restartRequired, true)
 })
+
+test('installation diagnostics retain failure classification without leaking registry credentials',()=>{
+  const result=normalizeResult({application:'failed',changed:false,stage:'install',failedAt:'registry',registries:['https://u:secret@registry.example'],warnings:['a previous entry stayed disabled'],packageResult:{kind:'network',exitCode:1,timedOut:false,truncated:false,output:'cannot reach https://u:secret@registry.example'}})
+  assert.equal(result.packageResult?.kind,'network');assert.equal(result.failedAt,'registry')
+  assert.equal(result.stage,'install');assert.ok(!JSON.stringify(result).includes('secret'))
+})
+
+test('diagnostics redact authorization, npm configuration and credential query parameters',()=>{
+  const output='Authorization: Bearer bearer-secret\n//registry.invalid/:_authToken=npm-secret\nhttps://registry.invalid/?access_token=query-secret'
+  const result=normalizeResult({application:'failed',packageResult:{kind:'network',output}})
+  for(const secret of ['bearer-secret','npm-secret','query-secret'])assert.ok(!JSON.stringify(result).includes(secret),secret)
+  assert.ok(result.packageResult.output.includes('[redacted]'))
+})
+
+test('diagnostic redaction happens before the display length limit cuts a credential URL',()=>{
+  const credential='https://user:cut-secret@registry.invalid',output='x'.repeat(8000-credential.indexOf('@'))+credential
+  const result=normalizeResult({application:'failed',packageResult:{kind:'network',output}})
+  assert.ok(!result.packageResult.output.includes('cut-secret'))
+  assert.ok(result.packageResult.output.length<=8000)
+})
 test('links reject credentials and dangerous schemes; normalize repository metadata', () => {
   const links = safeLinks({name:'@scope/demo',homepage:'javascript:alert(1)',repository:{url:'git+https://github.com/alice/demo.git'}})
   assert.deepEqual(links, {repository:'https://github.com/alice/demo',readme:'https://github.com/alice/demo',npm:'https://www.npmjs.com/package/@scope/demo'})

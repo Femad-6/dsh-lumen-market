@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import { EventEmitter } from 'node:events'
 import { createRoute } from '../lib/host/route.js'
 import { apply } from '../lib/index.js'
-const market={health:()=>({ok:true}),search:async q=>({ok:true,q}),installed:async()=>({ok:true,rows:[]}),updates:async()=>({ok:true,rows:[]}),detail:async()=>({name:'demo'}),inspect:async()=>({previewId:'id'}),execute:async()=>({ok:false,application:'failed'})}
+const market={health:()=>({ok:true}),search:async q=>({ok:true,q}),installed:async()=>({ok:true,rows:[]}),updates:async()=>({ok:true,rows:[]}),detail:async()=>({name:'demo'}),inspect:async()=>({previewId:'id'}),execute:async()=>({ok:false,application:'failed'}),operation:args=>({ok:true,args,operation:null}),cancel:async body=>({ok:true,status:'cancelled',operationId:body.operationId})}
 function invoke({path='/health',method='GET',headers={'x-dsh-lumen-market':'1'},remote='127.0.0.1',body}={}){
   const req=new EventEmitter();req.url='/api/lumen-market'+path;req.method=method;req.headers=headers;req.socket={remoteAddress:remote}
   const res={headers:{},statusCode:200,setHeader(k,v){this.headers[k]=v},end(s){this.body=JSON.parse(s)}}
@@ -29,6 +29,25 @@ test('internal error body never exposes upstream messages',async()=>{
   const req={url:'/api/lumen-market/health',method:'GET',headers:{'x-dsh-lumen-market':'1'},socket:{}}
   const res={setHeader(){},end(s){this.body=s}}
   await createRoute(broken)(req,res);assert.equal(res.statusCode,500);assert.equal(res.body,'{"ok":false,"code":"internal"}')
+})
+
+test('search route propagates explicit force refresh to the host',async()=>{
+  const r=await invoke({path:'/search?q=demo&force=1'})
+  assert.equal(r.body.q.force,true)
+})
+
+test('search route forwards GitHub sorting and refuses invalid sort parameters',async()=>{
+  const sorted=await invoke({path:'/search?source=github&sort=stars'})
+  assert.equal(sorted.body.q.sort,'stars')
+  assert.equal((await invoke({path:'/search?source=github&sort=arbitrary'})).statusCode,400)
+})
+
+test('operation polling and cancel routes validate their bound identifiers and loopback',async()=>{
+  const poll=await invoke({path:'/operation?previewId=preview-id'})
+  assert.equal(poll.statusCode,200);assert.equal(poll.body.args.previewId,'preview-id')
+  assert.equal((await invoke({path:'/cancel',method:'POST',body:'{"operationId":"operation-id"}'})).body.status,'cancelled')
+  assert.equal((await invoke({path:'/cancel',method:'POST',remote:'192.0.2.2',body:'{"operationId":"operation-id"}'})).statusCode,403)
+  assert.equal((await invoke({path:'/cancel',method:'POST',body:'{"operationId":"operation-id","spec":"evil"}'})).statusCode,400)
 })
 test('Cordis registers independent prefix route and disposes resources',()=>{
   let registered,cleanup,disposed=false
