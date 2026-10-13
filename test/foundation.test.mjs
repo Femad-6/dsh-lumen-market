@@ -76,9 +76,10 @@ test('profile verifies manifest, chooses argv before hmr/env, reads actual insta
   mkdirSync(join(dir,'node_modules','demo'),{recursive:true})
   writeFileSync(join(dir,'node_modules','demo','package.json'),JSON.stringify({name:'demo',version:'1.2.0',description:'A real description',homepage:'https://example.com'}))
   const profile=new Profile({argv:['node','bad-path',dir],env:{DSH_PROFILE_DIR:other},hmrBaseDir:()=>other})
-  const snapshot=await profile.snapshot({listBundles:async()=>[{name:'@deepseek-ai/dsh-base',version:'0.2.0'}]})
+  const snapshot=await profile.snapshot({listBundles:async()=>[{name:'@deepseek-ai/dsh-base',version:'0.2.0'},{name:'demo',installed:true,removable:true}]})
   assert.equal(snapshot.profile.dir,dir); assert.equal(snapshot.rows[0].installed,'1.2.0')
   assert.equal(snapshot.rows[0].description,'A real description'); assert.equal(snapshot.runtimeVersion,'0.2.0')
+  assert.equal(snapshot.rows[0].removable,true)
   assert.equal(new Profile({argv:[],env:{}}).resolution().dir,null)
 })
 test('bounded JSON reader rejects oversized streamed response and cancels the body', async () => {

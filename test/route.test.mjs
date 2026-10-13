@@ -42,6 +42,27 @@ test('search route forwards GitHub sorting and refuses invalid sort parameters',
   assert.equal((await invoke({path:'/search?source=github&sort=arbitrary'})).statusCode,400)
 })
 
+test('search route accepts new orders and uses default ordering when omitted',async()=>{
+  assert.equal((await invoke({path:'/search'})).body.q.sort,'default')
+  for(const sort of ['default','updated','forks']){
+    const result=await invoke({path:`/search?source=github&sort=${sort}`})
+    assert.equal(result.statusCode,200);assert.equal(result.body.q.sort,sort)
+  }
+})
+
+test('cache-only route keeps query isolation and does not request live source results',async()=>{
+  const cached=await invoke({path:'/search-cache?q=market&source=github&page=2&sort=stars'})
+  assert.equal(cached.statusCode,200);assert.equal(cached.body.q.cachedOnly,true)
+  assert.equal(cached.body.q.page,2);assert.equal(cached.body.q.sort,'stars')
+})
+
+test('uninstall route accepts only preview IDs and remains loopback protected',async()=>{
+  const response=await invoke({path:'/uninstall',method:'POST',body:'{"previewId":"id"}'})
+  assert.equal(response.statusCode,200)
+  assert.equal((await invoke({path:'/uninstall',method:'POST',remote:'192.0.2.2',body:'{"previewId":"id"}'})).statusCode,403)
+  assert.equal((await invoke({path:'/uninstall',method:'GET'})).statusCode,405)
+})
+
 test('operation polling and cancel routes validate their bound identifiers and loopback',async()=>{
   const poll=await invoke({path:'/operation?previewId=preview-id'})
   assert.equal(poll.statusCode,200);assert.equal(poll.body.args.previewId,'preview-id')

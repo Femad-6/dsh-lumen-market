@@ -62,9 +62,9 @@ test('npm pagination counts matching candidates and skips non-plugin raw pages',
     return {name,version:'1.0.0',...(index>=20?{dsh:manifest.dsh}:{})}
   }}})
   const first=await npm.search('plugin tools',1),second=await npm.search('plugin tools',2)
-  assert.equal(first.rows.length,20)
+  assert.equal(first.rows.length,21)
   assert.equal(first.hasMore,true)
-  assert.deepEqual(second.rows.map(r=>r.name),['dsh-result-40','dsh-result-41'])
+  assert.deepEqual(second.rows.map(r=>r.name),['dsh-result-41'])
   assert.equal(second.hasMore,false)
 })
 
@@ -132,6 +132,7 @@ test('GitHub star sorting reaches the API and has separate caches across orders 
   await source.search('market',1,{sort:'stars'});assert.equal(urls.length,2)
   await source.search('market',2,{sort:'stars'})
   assert.equal(urls.at(-1).searchParams.get('sort'),'stars');assert.equal(urls.at(-1).searchParams.get('order'),'desc')
+  assert.equal(urls.at(-1).searchParams.get('per_page'),'21')
   assert.equal(urls.at(-1).searchParams.get('page'),'2');assert.equal(stars.sort,'stars')
 })
 
@@ -143,6 +144,15 @@ test('GitHub detail retains its observed star count after manifest verification'
 test('GitHub rejects unsupported sort values before requesting the API',async()=>{
   const {source}=githubFixture()
   await assert.rejects(source.search('market',1,{sort:'arbitrary'}),/invalid-sort/)
+})
+
+test('GitHub default uses best match while recent and forks use distinct API orders and caches',async()=>{
+  const urls=[]
+  const source=new GithubSource({http:{json:async url=>{urls.push(new URL(url));return {total_count:0,items:[]}}}})
+  for(const sort of ['default','updated','forks'])await source.search('market',1,{sort})
+  assert.deepEqual(urls.map(url=>url.searchParams.get('sort')),[null,'updated','forks'])
+  await source.search('market',1,{sort:'forks'});assert.equal(urls.length,3)
+  await source.search('market',2,{sort:'forks'});assert.equal(urls.at(-1).searchParams.get('page'),'2')
 })
 
 test('missing or malformed GitHub stars are unknown rather than fabricated zeroes',()=>{

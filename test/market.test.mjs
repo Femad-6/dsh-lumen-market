@@ -15,6 +15,63 @@ test('combined search retains npm result when GitHub fails',async()=>{
   const {market}=setup({failGit:true});const r=await market.search({q:'demo'})
   assert.equal(r.rows[0].name,'demo');assert.equal(r.errors[0].source,'github');assert.equal(r.errors[0].retryAt,1234)
 })
+
+test('discovery fills 21 visible cards after installed filtering and pagination never repeats them',async()=>{
+  const {market,npm}=setup({installed:[{name:'plugin-0',source:'local'},{name:'plugin-1',source:'registry'}]})
+  const all=Array.from({length:50},(_,i)=>({id:`npm:plugin-${i}`,name:`plugin-${i}`,source:'npm'}))
+  npm.search=async(q,page)=>({rows:all.slice((page-1)*21,page*21),page,total:all.length,hasMore:page*21<all.length})
+  const first=await market.search({source:'npm'}),second=await market.search({source:'npm',page:2}),last=await market.search({source:'npm',page:3})
+  assert.equal(first.rows.length,21);assert.equal(second.rows.length,21);assert.equal(last.rows.length,6)
+  assert.equal(first.rows[0].name,'plugin-2');assert.equal(second.rows[0].name,'plugin-23')
+  assert.equal(new Set([...first.rows,...second.rows,...last.rows].map(row=>row.name)).size,48)
+  assert.equal(last.hasMore,false)
+})
+
+test('combined discovery is one page of 21 cards rather than a page from each source',async()=>{
+  const {market,npm}=setup()
+  npm.search=async(q,page)=>({rows:page===1?Array.from({length:21},(_,i)=>({name:`npm-${i}`,source:'npm'})):[],total:21,hasMore:false})
+  market.github.search=async(q,page)=>({rows:page===1?Array.from({length:21},(_,i)=>({name:`alice/plugin-${i}`,repo:`alice/plugin-${i}`,source:'github'})):[],total:21,hasMore:false})
+  const first=await market.search(),second=await market.search({page:2})
+  assert.equal(first.rows.length,21);assert.equal(second.rows.length,21)
+  assert.equal(new Set([...first.rows,...second.rows].map(row=>row.name)).size,42)
+  assert.equal(second.hasMore,false)
+})
+
+test('direct deep-page requests and concurrent pagination keep the same 21-item boundaries',async()=>{
+  const {market,npm}=setup({installed:[{name:'plugin-0',source:'local'}]})
+  const all=Array.from({length:100},(_,i)=>({name:`plugin-${i}`,source:'npm'})),calls=[]
+  npm.search=async(q,page)=>{calls.push(page);await new Promise(resolve=>setImmediate(resolve));return {rows:all.slice((page-1)*21,page*21),total:all.length,hasMore:page*21<all.length}}
+  const deep=await market.search({source:'npm',page:4})
+  assert.equal(deep.rows.length,21);assert.equal(deep.rows[0].name,'plugin-64')
+  calls.length=0
+  const [first,second]=await Promise.all([market.search({q:'new',source:'npm'}),market.search({q:'new',source:'npm',page:2})])
+  assert.equal(first.rows.length,21);assert.equal(second.rows.length,21)
+  assert.equal(new Set([...first.rows,...second.rows].map(row=>row.name)).size,42)
+  assert.deepEqual(calls,[1,2,3])
+})
+
+test('failed refresh falls back to the same source query snapshot and rechecks installed state',async()=>{
+  const {market,rows}=setup()
+  market.github.search=async()=>({rows:[{name:'alice/demo',repo:'alice/demo',source:'github',stars:42}],total:1})
+  await market.search({q:'market',source:'github',sort:'stars'})
+  market.github.search=async()=>{throw Object.assign(new Error('rate-limited'),{code:'rate-limited',extra:{retryAt:9999}})}
+  const result=await market.search({q:'market',source:'github',sort:'stars',force:true})
+  assert.equal(result.rows[0].name,'alice/demo');assert.equal(result.stale,true)
+  assert.equal(result.sources.github.cached,true);assert.equal(result.errors[0].retryAt,9999)
+  assert.equal((await market.search({q:'different',source:'github',sort:'stars'})).rows.length,0)
+  rows.push({name:'demo',source:'git',specifier:'github:alice/demo'})
+  assert.equal((await market.search({q:'market',source:'github',sort:'stars'})).rows.length,0)
+})
+
+test('cache-only search returns previous successes without remote requests and empty success replaces them',async()=>{
+  const {market,npm}=setup();let requests=0
+  npm.search=async()=>{requests++;return {rows:requests===1?[{name:'demo',source:'npm'}]:[],total:requests===1?1:0}}
+  await market.search({source:'npm',q:'market'})
+  assert.equal((await market.search({source:'npm',q:'market',cachedOnly:true})).rows[0].name,'demo')
+  assert.equal(requests,1)
+  await market.search({source:'npm',q:'market',force:true})
+  assert.equal((await market.search({source:'npm',q:'market',cachedOnly:true})).rows.length,0)
+})
 test('install uses server preview exact version, never client supplied spec',async()=>{
   const {market,calls}=setup();const p=await market.inspect({source:'npm',name:'demo',version:'2.0.0'})
   assert.equal(p.preview.spec,'demo@2.0.0')
@@ -95,13 +152,39 @@ test('failed update lookups remain visible in aggregate errors instead of empty 
   assert.equal(data.rows[0].verdict,'lookup-failed')
   assert.equal(data.errors[0].name,'demo');assert.equal(data.errors[0].code,'network')
 })
-test('all-source search includes matching locally linked installs without offering registry replacement',async()=>{
+test('discovery excludes local installs and matching npm candidates while installed retains them',async()=>{
   const {market}=setup({installed:[{id:'installed:dsh-moonpet',name:'dsh-moonpet',source:'local',installed:'0.1.2',description:'MoonPet 月伴',links:{repository:'https://github.com/Femad-6/deepseek-moonpet'},bundle:true}]})
   let data=await market.search({q:'moonpet',source:'all'})
   const moon=data.rows.find(r=>r.name==='dsh-moonpet')
-  assert.ok(moon);assert.equal(moon.id,'installed:dsh-moonpet');assert.equal(moon.alreadyInstalled,true);assert.equal(moon.installable,false);assert.equal(moon.source,'local')
+  assert.equal(moon,undefined)
+  assert.equal(data.sources.installed,undefined)
+  assert.equal((await market.installed()).rows[0].name,'dsh-moonpet')
   assert.equal((await market.search({q:'not-matching',source:'all'})).rows.some(r=>r.name==='dsh-moonpet'),false)
   assert.equal((await market.search({q:'moonpet',source:'npm'})).rows.some(r=>r.id==='installed:dsh-moonpet'),false)
+})
+
+test('discovery hides installed npm names across sources and GitHub repositories across package names',async()=>{
+  const {market}=setup({installed:[{name:'demo',source:'local',installed:'1.0.0'},{name:'different-package-name',source:'git',specifier:'github:Alice/demo#main'},{name:'linked-package',source:'local',links:{repository:'https://github.com/Carol/linked.git'}}]})
+  market.github.search=async()=>({rows:[{id:'github:alice/demo',name:'alice/demo',repo:'alice/demo',source:'github'},{id:'github:carol/linked',name:'carol/linked',repo:'carol/linked',source:'github'},{id:'github:bob/new',name:'bob/new',repo:'bob/new',source:'github'}],total:41,hasMore:true})
+  for(const source of ['all','npm','github']){
+    const result=await market.search({source})
+    assert.deepEqual(result.rows.map(row=>row.name),source==='npm'?[]:['bob/new'])
+    if(source!=='npm')assert.equal(result.hasMore,true)
+  }
+})
+
+test('all explicit GitHub orders are accepted only in GitHub scope',async()=>{
+  const {market}=setup()
+  for(const sort of ['updated','forks','stars']){
+    assert.equal((await market.search({source:'github',sort})).sort,sort)
+    await assert.rejects(market.search({source:'all',sort}),/github-sort-required/)
+  }
+})
+
+test('discovery also hides npm plugins installed under an alias',async()=>{
+  const {market}=setup({installed:[{name:'my-demo',source:'alias',specifier:'npm:demo@1.0.0',manifest:{name:'demo'},installed:'1.0.0'}]})
+  assert.deepEqual((await market.search({source:'npm'})).rows,[])
+  assert.equal((await market.installed()).rows[0].name,'my-demo')
 })
 
 test('installed list returns disk data without performing remote version lookups',async()=>{
@@ -122,11 +205,12 @@ test('explicit discover refresh invalidates both sources and uses filtered hasMo
 })
 
 test('market passes star sorting to GitHub and preserves the upstream order',async()=>{
-  const {market}=setup();let received
-  market.github.search=async(q,page,options)=>{received={q,page,options};return {rows:[{id:'github:bob/high',repo:'bob/high',name:'bob/high',source:'github',stars:400},{id:'github:alice/low',repo:'alice/low',name:'alice/low',source:'github',stars:3}],total:40,page,sort:options?.sort}}
+  const {market}=setup();const received=[]
+  const all=Array.from({length:43},(_,index)=>({id:`github:alice/plugin-${index}`,repo:`alice/plugin-${index}`,name:`alice/plugin-${index}`,source:'github',stars:400-index}))
+  market.github.search=async(q,page,options)=>{received.push({q,page,options});return {rows:all.slice((page-1)*21,page*21),total:43,page,sort:options?.sort}}
   const result=await market.search({q:'market',source:'github',page:2,sort:'stars'})
-  assert.deepEqual(received,{q:'market',page:2,options:{sort:'stars'}})
-  assert.deepEqual(result.rows.map(row=>row.stars),[400,3]);assert.equal(result.sort,'stars')
+  assert.deepEqual(received.map(call=>call.page),[1,2]);assert.ok(received.every(call=>call.options.sort==='stars'))
+  assert.deepEqual(result.rows.map(row=>row.stars),Array.from({length:21},(_,index)=>379-index));assert.equal(result.sort,'stars')
 })
 
 test('market refuses unsupported sorting and star sorting outside GitHub scope',async()=>{
@@ -181,4 +265,80 @@ test('too-late cancellation never changes a successful application into cancelle
   assert.equal((await market.cancel({operationId:operation.operationId})).status,'too-late')
   release({application:'applied',changed:true})
   assert.equal((await active).ok,true)
+})
+
+test('uninstall previews bind the installed target and removal uses only the official manager',async()=>{
+  const {market,rows,calls}=setup({installed:[{name:'local-demo',source:'local',specifier:'link:D:/dev',installed:'1.0.0',removable:true}]})
+  const removed=[];market.manager().removeBundle=async name=>{removed.push(name);rows.length=0;return {application:'applied',changed:true}}
+  assert.equal((await market.installed()).rows[0].removable,true)
+  const preview=await market.inspect({action:'uninstall',source:'installed',name:'local-demo'})
+  assert.equal(preview.preview.name,'local-demo');assert.equal(preview.preview.action,'uninstall')
+  assert.deepEqual(removed,[])
+  const result=await market.execute('uninstall',{previewId:preview.previewId})
+  assert.equal(result.ok,true);assert.deepEqual(removed,['local-demo']);assert.deepEqual(calls,[])
+  assert.deepEqual((await market.installed()).rows,[])
+  await assert.rejects(market.execute('uninstall',{previewId:preview.previewId}),/preview-expired/)
+})
+
+test('installed detail preserves installed identity and official removal availability',async()=>{
+  const {market}=setup({installed:[{id:'installed:demo',name:'demo',source:'registry',removable:true}]})
+  let detail=await market.detail({source:'installed',name:'demo'})
+  assert.equal(detail.alreadyInstalled,true);assert.equal(detail.removable,false)
+  market.manager().removeBundle=async()=>({application:'applied'})
+  detail=await market.detail({source:'installed',name:'demo'})
+  assert.equal(detail.removable,true)
+})
+
+test('uninstall rejects unsupported, protected, changed or forged targets before any removal',async()=>{
+  const {market,rows}=setup({installed:[{name:'demo',source:'registry',specifier:'1.0.0',installed:'1.0.0',removable:true}]})
+  assert.equal((await market.installed()).rows[0].removable,false)
+  await assert.rejects(market.inspect({action:'uninstall',source:'installed',name:'demo'}),/removal-unavailable/)
+  let removes=0;market.manager().removeBundle=async()=>{removes++;return {application:'applied'}}
+  rows[0].removable=false
+  await assert.rejects(market.inspect({action:'uninstall',source:'installed',name:'demo'}),/not-removable/)
+  rows[0].removable=true
+  const preview=await market.inspect({action:'uninstall',source:'installed',name:'demo'})
+  await assert.rejects(market.execute('uninstall',{previewId:preview.previewId,name:'other'}),/invalid-request/)
+  rows[0].specifier='link:D:/changed';rows[0].source='local'
+  await assert.rejects(market.execute('uninstall',{previewId:preview.previewId}),/preview-stale/)
+  assert.equal(removes,0)
+})
+
+test('uninstall failures retain installed state and do not set a successful restart notice',async()=>{
+  const {market}=setup({installed:[{name:'demo',source:'registry',specifier:'1.0.0',installed:'1.0.0',removable:true}]})
+  market.manager().removeBundle=async()=>({application:'failed',changed:false,error:{code:'stop-profile'}})
+  const preview=await market.inspect({action:'uninstall',source:'installed',name:'demo'})
+  const result=await market.execute('uninstall',{previewId:preview.previewId})
+  assert.equal(result.ok,false);assert.equal(result.error.code,'stop-profile')
+  assert.deepEqual(result.pendingRestart,[]);assert.equal((await market.installed()).rows[0].name,'demo')
+})
+
+test('uninstall previews expire and removal rechecks profile ownership and permissions',async()=>{
+  const {market,rows,setNow}=setup({installed:[{name:'demo',source:'registry',specifier:'1.0.0',installed:'1.0.0',removable:true}]})
+  let removes=0;market.manager().removeBundle=async()=>{removes++;return {application:'applied'}}
+  let preview=await market.inspect({action:'uninstall',source:'installed',name:'demo'})
+  setNow(600001);await assert.rejects(market.execute('uninstall',{previewId:preview.previewId}),/preview-expired/)
+  preview=await market.inspect({action:'uninstall',source:'installed',name:'demo'})
+  rows[0].removable=false
+  await assert.rejects(market.execute('uninstall',{previewId:preview.previewId}),/not-removable/)
+  rows[0].removable=true
+  preview=await market.inspect({action:'uninstall',source:'installed',name:'demo'})
+  const snapshot=market.profile.snapshot
+  market.profile.snapshot=async()=>({...await snapshot(),profile:{dir:'another-profile'}})
+  await assert.rejects(market.execute('uninstall',{previewId:preview.previewId}),/preview-stale/)
+  assert.equal(removes,0)
+})
+
+test('active uninstall blocks concurrent writes and does not offer unsupported cancellation',async()=>{
+  const {market}=setup({installed:[{name:'demo',source:'registry',specifier:'1.0.0',installed:'1.0.0',removable:true}]})
+  let finish;market.manager().removeBundle=async()=>new Promise(resolve=>finish=resolve)
+  const preview=await market.inspect({action:'uninstall',source:'installed',name:'demo'})
+  const active=market.execute('uninstall',{previewId:preview.previewId})
+  while(!finish)await new Promise(resolve=>setImmediate(resolve))
+  const operation=market.operation({previewId:preview.previewId}).operation
+  assert.equal(operation.phase,'removing');assert.equal(operation.cancellable,false)
+  await assert.rejects(market.execute('install',{previewId:'another'}),/busy/)
+  await assert.rejects(market.cancel({operationId:operation.operationId}),/cancellation-unavailable/)
+  finish({application:'restart-required',changed:true});const result=await active
+  assert.deepEqual(result.pendingRestart,['demo']);assert.equal(market.busy,false)
 })

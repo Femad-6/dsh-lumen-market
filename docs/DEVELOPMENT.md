@@ -13,7 +13,7 @@ npm pack --dry-run
 
 `preview` 在 `http://127.0.0.1:19408` 提供离线演示：使用真实客户端和 React，API、插件数据与安装结果均为模拟内容，不连接桌面 profile。它不能作为真实安装证据。关闭启动终端即可停止。
 
-选择「GitHub 星标最多」可使用 23 个模拟仓库验证排序、翻页和星标显示。
+选择 GitHub 专属排序可使用 23 个模拟仓库验证星标、最近更新、Fork 排序及翻页。预览发现页也会隐藏模拟的已安装插件。
 
 访问 `http://127.0.0.1:19408/?layout=long` 可验证 20 个模拟插件的长列表和长详情。宽屏详情使用 sticky 定位、容器高度上限和独立滚动；ResizeObserver 根据页面与底部栏尺寸更新高度，卸载时清理。窄屏回到内联详情，选择插件后只滚动市场自身容器，不滚动其它宿主面板。
 
@@ -43,7 +43,9 @@ GitHub 单次查验最多 12 请求，并发 3，每个请求超时 10 秒。清
 
 `plugin-manager/install-state` 事件按本次 requestId 匹配，仅投影阶段与注册表尝试信息，不转发任意宿主日志。客户端每 500 毫秒轮询绑定自身 previewId 的操作；结束或卸载时停止轮询。取消端接受服务器生成的 operationId，查验阶段取消会阻止安装开始，安装阶段委托官方 cancelInstall。`too-late` 不能解释为取消成功；最终文件恢复和 application 仍由官方管理器确认。
 
-GitHub 搜索支持 `sort=updated`（默认）与 `sort=stars`，固定 `order=desc`，由 [GitHub repository search API](https://docs.github.com/en/rest/search/search#search-repositories) 在搜索结果上排序。`/search?source=github&sort=stars` 是合法调用；其它来源搭配 stars 或未知 sort 会被拒绝。搜索缓存按关键词、页码和排序隔离。Star 数仅接受非负安全整数；缺失/无效时表示未知，不展示伪造的 0。
+搜索支持 `sort=default`（默认）、`sort=stars`、`sort=updated` 与 `sort=forks`。默认不传 GitHub API 的 sort 参数，使用最佳匹配；三个专属排序使用 `order=desc`，由 [GitHub repository search API](https://docs.github.com/en/rest/search/search#search-repositories) 对搜索结果排序。其它来源只允许 default，未知 sort 被拒绝。搜索缓存按关键词、页码和排序隔离。Star 数仅接受非负安全整数；缺失/无效时表示未知，不展示伪造的 0。
+
+发现搜索不注入本地已安装行，并按当前 profile 的包名或 GitHub 仓库身份过滤已安装候选；客户端也隐藏 alreadyInstalled 或 installed ID 的行。来源分页仍沿用上游游标，隐藏候选可能造成当前页不足 20 个或为空，此时仍可继续翻页。安装状态下拉框已移除，「仅可安装」筛选仅作用于发现页。
 
 安装结果保留 warnings、stage、failedAt 和 packageResult 的分类、退出状态与最多 8000 字符的输出；先对完整输出的 URL 凭据、Authorization、npm token 及常见凭据参数脱敏，再截断。市场不授权构建脚本，也不修改版本豁免。
 
@@ -59,8 +61,8 @@ GitHub token 是凭据，不应提交到 Git、写进 Issue 或放在截图中�
 
 | 方法 | 路由 |
 | --- | --- |
-| GET | /search、/detail、/installed、/updates、/health、/operation?previewId=... |
-| POST | /inspect、/install、/upgrade、/cancel（仅 operationId） |
+| GET | /search、/search-cache、/detail、/installed、/updates、/health、/operation?previewId=... |
+| POST | /inspect、/install、/upgrade、/uninstall（仅 previewId）、/cancel（仅 operationId） |
 
 页面底部「诊断」是推荐的排查入口。直接访问 host 时，请使用实际端口和合法认证会话；不要为排查关闭宿主认证。
 
@@ -80,3 +82,27 @@ CI 在 Linux/Windows、Node 22/24 上执行语法与包入口检查、测试和�
 `docs/screenshots/` 保存经过隐私裁切的真实 DeepSeek Harness 桌面截图。完整原图、机器日志和诊断数据保留在 Git 忽略的 `verification/` 中。公开截图只裁切私人侧栏区域，不替换界面文字或数据。
 
 浏览器 HMR 是否热替换客户端由 profile 决定；host 修改需要重启。真实升级、回滚、脚本授权仍应由使用者在实际宿主中验收。
+
+## 诊断与卸载
+
+诊断使用独立客户端状态及请求代次，关闭后取消读取并忽略迟到响应，不覆盖操作结果。面板可关闭、重开，JSON 格式化显示并限制滚动高度。
+
+卸载权限来自 `pluginManager.listBundles()` 的 `removable` 字段，同时要求宿主提供 `removeBundle`。`/inspect` 使用 `{action:"uninstall",source:"installed",name}` 生成预览，保存当前 profile 目录、依赖名、来源、specifier 和实际版本。`/uninstall` 只接受 previewId，重新读取权限和状态，拒绝变化或过期目标；调用官方 `removeBundle(name)`，不运行自行编写的文件删除命令。卸载期间共用写操作锁，官方接口不提供卸载取消能力，因此执行阶段不显示取消操作。
+
+执行结果保留官方失败原因；成功后刷新列表并关闭被移除目标的旧详情。内置项和不支持官方卸载接口的宿主禁用按钮。测试中的 removeBundle 为明确标注的模拟实现，真实运行时仍可能因 stop-profile、bundle-in-use 或 not-removable 拒绝卸载。
+
+卸载卡片与已安装详情共用同一预览/确认管线。确认区在渲染后按 previewId 自动滚动到视野中央并获得焦点；失败与操作结果也自动定位，避免长列表下方点击时误以为没有响应。未安装详情不显示卸载。已安装详情返回 alreadyInstalled 和与宿主 removeBundle 能力一致的 removable，防止详情响应覆盖卡片的权限状态。
+
+## 成功查询快照
+
+当前 profile 的 `.lumen-market/search-cache.json` 保存版本1快照，按来源、关键词、页码和排序区分，最多80项、8MiB。先写同目录单个临时文件，再替换缓存文件；不批量删除文件。仅成功来源结果覆盖快照，失败回退对应旧快照，部分来源可更新而另一个来源保留旧数据。缓存文件经过 sanitize，不保存 Token；损坏文件被忽略，写入失败返回 cacheWarnings。
+
+`/search-cache` 只读取快照和当前 profile，不发起远端请求；缓存元数据使用 sources[source].cached/checkedAt、stale、cacheHit。实时 `/search` 失败时可返回对应缓存并保留错误，强制刷新只清理短期来源缓存，不清理成功快照。已安装过滤与兼容性按当前 profile 重新计算，缓存不能替代安装预览查验。
+
+客户端并行读取本地快照及实时结果，只有当前代次且实时请求尚未完成时才展示快照；成功后替换，失败保留同查询数据。关键词/来源/排序/页码不同的失败请求不会借用当前列表。浏览器 localStorage 只保存最近成功的查询控件值，数据快照保存在 host 当前 profile。离线模拟可用 `?mode=slow` 观察先展示旧列表，或成功查询后重启预览服务再用 `?mode=rate-limit` 验证磁盘恢复。
+
+## 21项统一发现分页
+
+`DISCOVERY_PAGE_SIZE=21` 共用于 npm 的已验证结果分页和 GitHub 的 per_page。市场按查询维护串行扫描游标，对来源结果去重、过滤当前已安装项后再取显示页，全部来源每页总共21项。直接深页和并发请求使用同一索引边界。补齐扫描受上限约束，达到上限时返回 scanLimited 提示；来源耗尽时最后一页按实际数量展示。客户端「仅可安装」仍为额外页面内筛选，可能减少可见卡片数量。
+
+快照用 raw21/page21 前缀区分原始来源页和显示页，避免误用旧20项缓存页。宽屏无详情时采用三列，窄屏和详情旁列表响应式调整。

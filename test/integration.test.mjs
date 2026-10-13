@@ -18,7 +18,16 @@ async function fixture(t,mode){
   let market,finish,cancelled=false,observedEnabled
   const restore=()=>{writeFileSync(manifestPath,JSON.stringify(before));writeFileSync(diskPath,JSON.stringify(pkg));writeFileSync(lockPath,'fixture-lock-v1\n')}
   const manager={
-    listBundles:async()=>[{name:'@deepseek-ai/dsh-base',version:'0.2.0'},{name:'demo',version:'1.0.0',enabled:false,installed:true}],
+    listBundles:async()=>[{name:'@deepseek-ai/dsh-base',version:'0.2.0'},{name:'demo',version:'1.0.0',enabled:false,installed:true,removable:true}],
+    removeBundle:async name=>{
+      assert.equal(name,'demo')
+      if(mode==='failure')return {application:'failed',changed:false,error:{code:'stop-profile'}}
+      const current=JSON.parse(readFileSync(manifestPath,'utf8'))
+      delete current.dependencies[name]
+      current.dsh.profile.bundles=current.dsh.profile.bundles.filter(bundle=>bundle!==name)
+      writeFileSync(manifestPath,JSON.stringify(current))
+      return {application:'applied',changed:true}
+    },
     installBundle:async(spec,options)=>{
       assert.equal(spec,'demo@2.0.0');observedEnabled=options.enabled
       writeFileSync(manifestPath,JSON.stringify({...before,dependencies:{demo:'2.0.0'}}));writeFileSync(diskPath,JSON.stringify({...pkg,version:'2.0.0'}));writeFileSync(lockPath,'fixture-lock-v2\n')
@@ -73,4 +82,25 @@ test('isolated HTTP cancel waits for the simulated manager to restore the profil
   assert.equal((await active).application,'cancelled')
   assert.equal((await f.request('/installed')).rows.find(r=>r.name==='demo').installed,'1.0.0')
   assert.equal(f.readLock(),'fixture-lock-v1\n')
+})
+
+test('isolated HTTP uninstall previews then removes only the selected simulated dependency',async t=>{
+  const f=await fixture(t,'success')
+  assert.equal((await f.request('/installed')).rows.find(row=>row.name==='demo').removable,true)
+  const preview=await f.request('/inspect',{action:'uninstall',source:'installed',name:'demo'})
+  assert.equal(f.readManifest().dependencies.demo,'1.0.0')
+  const result=await f.request('/uninstall',{previewId:preview.previewId})
+  assert.equal(result.ok,true);assert.equal(result.action,'uninstall')
+  assert.equal(f.readManifest().dependencies.demo,undefined)
+  assert.deepEqual(f.readManifest().dsh.profile.bundles,['untouched'])
+  assert.equal((await f.request('/installed')).rows.some(row=>row.name==='demo'),false)
+})
+
+test('isolated HTTP uninstall failure displays official rejection and retains the dependency',async t=>{
+  const f=await fixture(t,'failure')
+  const preview=await f.request('/inspect',{action:'uninstall',source:'installed',name:'demo'})
+  const result=await f.request('/uninstall',{previewId:preview.previewId})
+  assert.equal(result.ok,false);assert.equal(result.error.code,'stop-profile')
+  assert.equal(f.readManifest().dependencies.demo,'1.0.0')
+  assert.equal((await f.request('/installed')).rows.some(row=>row.name==='demo'),true)
 })
