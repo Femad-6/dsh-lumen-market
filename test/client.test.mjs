@@ -68,6 +68,34 @@ test('client suppresses malicious link metadata and safely renders description t
   assert.equal(module.safeLink('https://example.com/docs'),'https://example.com/docs')
 })
 
+test('upgrade lamps appear only beside eligible upgrade buttons in cards and installed details',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const rows=[{...row,id:'installed:upgradable',name:'upgradable',source:'registry',installed:'1.0.0',latest:'2.0.0',upgradeable:true},{...row,id:'installed:current',name:'current',source:'registry',installed:'1.0.0',latest:'1.0.0',upgradeable:false},{id:'installed:blocked',name:'blocked',source:'registry',verdict:'blocked',upgradeable:false},{id:'installed:local',name:'local',source:'local',upgradeable:false}],posts=[]
+  const module=client((url,init)=>{
+    if(url.includes('/detail'))return response(rows.find(item=>item.name===new URL(url,'http://localhost').searchParams.get('name')))
+    if(url.endsWith('/inspect')){posts.push(JSON.parse(init.body));return response({previewId:'upgrade',preview:{...rows[0],action:'upgrade',spec:'upgradable@2.0.0'}})}
+    return response({rows:url.includes('/search')?[]:rows,errors:[]})
+  })
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document
+  await act(async()=>[...doc.querySelectorAll('[role="tab"]')].find(tab=>tab.textContent==='已安装').click())
+  assert.equal(doc.querySelectorAll('.lm-card .lm-updateLight').length,1)
+  assert.equal(doc.querySelector('.lm-updateLight').getAttribute('aria-label'),'有可用更新')
+  const cards=[...doc.querySelectorAll('.lm-card')]
+  await act(async()=>[...cards[0].querySelectorAll('button')].find(button=>button.textContent==='查看详情').click())
+  assert.equal(doc.querySelectorAll('.lm-detail .lm-updateLight').length,1)
+  await act(async()=>[...doc.querySelectorAll('.lm-detail button')].find(button=>button.textContent==='升级预览').click())
+  assert.deepEqual(posts,[{action:'upgrade',source:'npm',name:'upgradable',version:'2.0.0'}])
+  await act(async()=>[...cards[1].querySelectorAll('button')].find(button=>button.textContent==='查看详情').click())
+  assert.equal(doc.querySelectorAll('.lm-detail .lm-updateLight').length,0)
+})
+
 test('closing diagnostics ignores late responses and leaves operation results intact',async()=>{
   let finishHealth
   const store=client(url=>url.endsWith('/health')?new Promise(r=>finishHealth=r):response(url.endsWith('/inspect')?{previewId:'install-preview',preview:{...row,action:'install'}}:url.endsWith('/install')?{ok:true,application:'applied'}:{rows:[],errors:[]})).createStore()

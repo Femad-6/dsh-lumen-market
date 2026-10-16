@@ -2,14 +2,16 @@
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供 npm 与 GitHub 插件发现、兼容性查验和安装管理。
 
-[npm · 0.5.1](https://www.npmjs.com/package/dsh-lumen-market) · [问题反馈](https://github.com/Femad-6/dsh-lumen-market/issues)
+[npm](https://www.npmjs.com/package/dsh-lumen-market) · [问题反馈](https://github.com/Femad-6/dsh-lumen-market/issues)
+
+当前版本：**0.5.2**。
 
 ## 功能
 
 - 搜索 npm 与 GitHub 插件，查看介绍、源码和文档。
 - 发现页只展示未安装插件，每页 21 项，支持来源筛选和 GitHub 排序。
 - 安装前查验兼容性，通过 DSH 官方管理器安装、更新和卸载。
-- 查看已安装插件与可用更新，显示操作进度和重启提醒。
+- 查看已安装插件与可用更新，显示操作进度和重启提醒；可升级插件显示小灯提示。
 - 本地保存发现结果，查询失败或限流时继续显示缓存。
 
 ## 安装
@@ -17,10 +19,39 @@
 在 DSH 的「插件 → 添加插件」中输入：
 
 ```text
-dsh-lumen-market@0.5.1
+dsh-lumen-market@0.5.2
 ```
 
 按官方管理器提示完成安装。需要支持官方插件管理器的 DeepSeek Harness；Node.js 22 或更高版本。
+
+## 使用须知
+
+- npm 来源支持检查版本更新；本地链接和 Git 来源暂不支持按包名升级。
+- Star 数目前仅显示在 GitHub 来源的结果中。
+- GitHub 查询可能受到限流；已有缓存时会继续展示，并标注缓存时间。
+- 截图中的背景和配色来自 DSH 宿主主题，不是插件自带皮肤。
+
+[更新记录](CHANGELOG.md)
+
+## 界面预览
+
+**发现插件**
+
+![搜索 npm 与 GitHub 插件](docs/screenshots/discover-search.png)
+
+**已安装插件与升级提示灯**
+
+![已安装插件及升级预览旁的小灯](docs/screenshots/installed-update-light.png)
+
+**查看可用更新**
+
+![可更新插件列表](docs/screenshots/updates-light.png)
+
+**GitHub 星标排序**
+
+![按 GitHub 星标排列搜索结果](docs/screenshots/github-stars.png)
+
+截图由实际使用界面提供，版本和查询状态以拍摄时为准。
 
 ## 许可证
 

@@ -48,7 +48,7 @@ const server=createServer(async(req,res)=>{
     if(u.pathname.endsWith('/installed'))payload={ok:true,rows:installed.map(row=>({...row,latest:undefined,upgradeable:false,verdict:row.source==='registry'?'unchecked':row.source})),pendingRestart:[...pendingRestart]}
     if(u.pathname.endsWith('/updates')){await new Promise(r=>setTimeout(r,500));payload={ok:true,rows:installed,pendingRestart:[...pendingRestart],checkedAt:new Date().toISOString()}}
     if(u.pathname.endsWith('/health'))payload={ok:true,profile:{dir:'offline-preview-profile',evidence:'simulation'},managementAvailable:true,busy:false,pendingRestart:[...pendingRestart],github:{authenticated:false,retryAt:0}}
-    if(u.pathname.endsWith('/detail'))payload=[...catalog,...fixtures,...scrollFixtures,...starFixtures,...installed].find(r=>r.name===u.searchParams.get('name'))||fixtures[0]
+    if(u.pathname.endsWith('/detail'))payload=(u.searchParams.get('source')==='installed'?installed:[...catalog,...fixtures,...scrollFixtures,...starFixtures]).find(r=>r.name===u.searchParams.get('name'))||fixtures[0]
     let body={};if(req.method==='POST'){let s='';for await(const chunk of req)s+=chunk;body=JSON.parse(s)}
     if(u.pathname.endsWith('/inspect')){
       const row=(body.action==='uninstall'?installed:catalog).find(row=>row.name===body.name)||fixtures[0],previewId=randomUUID()
