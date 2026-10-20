@@ -5,6 +5,23 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {SearchSnapshots} from '../lib/host/snapshots.js'
 import {Market} from '../lib/host/market.js'
+import {MarketError} from '../lib/host/core.js'
+
+test('verified installation metadata survives restart independently from search results',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'lumen-install-cache-'))
+  const profile={snapshot:async()=>({profile:{dir},rows:[],runtimeVersion:'0.2.0'})}
+  const target={source:'npm',name:'demo',version:'1.0.0',validation:'bundle',spec:'demo@1.0.0',manifest:{name:'demo',version:'1.0.0',dsh:{bundle:{patch:'x.yml'}}}}
+  const calls=[],manager={installBundle:async spec=>{calls.push(spec);return {application:'applied'}}}
+  let market=new Market({profile,npm:{detail:async()=>target},manager:()=>manager,snapshots:new SearchSnapshots({disk:true}),now:()=>123})
+  await market.detail({source:'npm',name:'demo',version:'1.0.0'})
+  assert.equal(JSON.parse(readFileSync(join(dir,'.lumen-market','install-cache.json'),'utf8')).entries.length,2)
+  market=new Market({profile,npm:{detail:async()=>{throw new MarketError('network',502)},clear(){}},github:{clear(){}},manager:()=>manager,snapshots:new SearchSnapshots({disk:true})})
+  const detail=await market.detail({source:'npm',name:'demo',version:'1.0.0'})
+  assert.equal(detail.installable,true);assert.equal(detail.cachedMetadata.checkedAt,123)
+  const preview=await market.inspect({source:'npm',name:'demo',version:'1.0.0'})
+  await market.execute('install',{previewId:preview.previewId})
+  assert.deepEqual(calls,['demo@1.0.0'])
+})
 
 test('successful query snapshots survive recreation and stay isolated by profile and key',()=>{
   const dir=mkdtempSync(join(tmpdir(),'lumen-snapshots-'))

@@ -3,10 +3,78 @@ import assert from 'node:assert/strict'
 import { NpmSource } from '../lib/host/npm.js'
 import { GithubSource, repoKey } from '../lib/host/github.js'
 import { HTTP } from '../lib/host/http.js'
+import {MarketError} from '../lib/host/core.js'
 const manifest={name:'dsh-demo',version:'1.0.0',description:'Small useful plugin',main:'lib/index.js',exports:{'.':'./lib/index.js','./client':'./lib/client.js'},dsh:{bundle:{patch:'./cordis.patch.yml'},client:{platform:'web'}}}
 const json=(x,status=200,headers={})=>new Response(JSON.stringify(x),{status,headers})
 const sha='a'.repeat(40)
-function githubFixture({pkg=manifest,missing,rate=false}={}) {
+
+test('empty star search requests the most-starred topic plugins without a keyword',async()=>{
+  let requested
+  const source=new GithubSource({http:{json:async url=>{requested=new URL(url);return {items:[{full_name:'alice/top',stargazers_count:9000}],total_count:1}}}})
+  const result=await source.search('   ',1,{sort:'stars'})
+  assert.equal(requested.searchParams.get('q'),'topic:dsh-plugin')
+  assert.equal(requested.searchParams.get('sort'),'stars');assert.equal(requested.searchParams.get('order'),'desc')
+  assert.equal(result.rows[0].stars,9000)
+})
+
+const historyWeek=Date.UTC(2026,9,18)/1000
+const weeklyNow=Date.UTC(2026,9,20,12)
+const history=(days,prior=[0,0,0,0,0,0,0])=>[
+  {week:historyWeek,total:days.reduce((a,b)=>a+b,0),days},
+  {week:historyWeek-604800,total:prior.reduce((a,b)=>a+b,0),days:prior}
+]
+
+test('weekly star ranking measures at most 50 candidates, sorts growth and shares one ranking across pages',async()=>{
+  const calls=[]
+  const source=new GithubSource({now:()=>weeklyNow,http:{json:async(url,options)=>{
+    calls.push(url)
+    if(url.includes('/search/')){
+      const params=new URL(url).searchParams
+      assert.equal(params.get('per_page'),'50');assert.equal(params.get('sort'),'stars')
+      return {total_count:120,items:Array.from({length:55},(_,i)=>({full_name:`alice/plugin-${i}`,stargazers_count:1000-i}))}
+    }
+    assert.equal(options.headers['x-github-api-version'],'2026-03-10')
+    assert.ok(url.includes('/stargazers/history?per_page=2'))
+    const index=Number(url.match(/plugin-(\d+)/)[1])
+    return history([index,0,999,0,0,0,0])
+  }}})
+  const first=await source.search('',1,{sort:'weekly-stars'}),second=await source.search('',2,{sort:'weekly-stars'}),third=await source.search('',3,{sort:'weekly-stars'})
+  assert.equal(calls.length,51)
+  assert.equal(first.rows[0].repo,'alice/plugin-49');assert.equal(first.rows[0].weeklyStars,49)
+  assert.equal(first.weekly.candidateLimit,50);assert.equal(first.weekly.candidates,50);assert.equal(first.weekly.measured,50)
+  assert.equal(first.weekly.totalMatches,120)
+  assert.equal(second.rows[0].weeklyStars,28);assert.equal(third.rows.length,8);assert.equal(third.hasMore,false)
+  assert.equal(new Set([...first.rows,...second.rows,...third.rows].map(row=>row.repo)).size,50)
+})
+
+test('weekly star history sums seven complete GitHub days across the week boundary, excluding today and older days',async()=>{
+  const source=new GithubSource({now:()=>weeklyNow,http:{json:async url=>url.includes('/search/')?{total_count:1,items:[{full_name:'alice/demo',stargazers_count:100}]}:history([2,3,900,0,0,0,0],[700,800,1,1,1,1,1])}})
+  const result=await source.search('',1,{sort:'weekly-stars'})
+  assert.equal(result.rows[0].weeklyStars,10)
+})
+
+test('weekly ranking keeps failed measurements unknown and stops further network requests after rate limiting',async()=>{
+  let requests=0
+  const source=new GithubSource({now:()=>weeklyNow,http:{json:async url=>{
+    requests++
+    if(url.includes('/search/'))return {total_count:8,items:Array.from({length:8},(_,i)=>({full_name:`alice/p${i}`,stargazers_count:100-i}))}
+    if(url.includes('/p0/'))return history([0,0,0,0,0,0,0])
+    throw new MarketError('rate-limited',502,{retryAt:weeklyNow+60000})
+  }}})
+  const result=await source.search('',1,{sort:'weekly-stars'})
+  assert.ok(requests<=4)
+  assert.equal(result.rows[0].weeklyStars,0)
+  assert.equal(result.rows[1].weeklyStars,null)
+  assert.equal(result.weekly.measured,1);assert.equal(result.weekly.failed,7)
+})
+
+test('weekly ranking rejects missing or malformed history instead of inventing zero and propagates total failures',async()=>{
+  for(const invalid of [[],{},[{week:historyWeek,total:7,days:[7]}],history([1,-1,0,0,0,0,0])]){
+    const source=new GithubSource({now:()=>weeklyNow,http:{json:async url=>url.includes('/search/')?{total_count:1,items:[{full_name:'alice/demo',stargazers_count:100}]}:invalid}})
+    await assert.rejects(source.search('',1,{sort:'weekly-stars'}),e=>e.code==='invalid-star-history')
+  }
+})
+function githubFixture({pkg=manifest,missing,rate=false,tree,largeClient=false}={}) {
   const urls=[]
   const http=new HTTP({fetchImpl:async(url,init)=>{
     urls.push([url,init.headers]);assert.ok(url.startsWith('https://api.github.com/'))
@@ -14,9 +82,11 @@ function githubFixture({pkg=manifest,missing,rate=false}={}) {
     if(url.includes('/search/'))return json({total_count:1,items:[{full_name:'alice/demo',description:'A description',default_branch:'main',stargazers_count:2}]})
     if(url.endsWith('/repos/alice/demo'))return json({full_name:'alice/demo',default_branch:'main',stargazers_count:2})
     if(url.includes('/commits/'))return json({sha})
+    if(url.includes('/git/trees/')){assert.ok(url.includes(`/git/trees/${sha}?recursive=1`));return json(tree?{...tree,tree:Array.isArray(tree.tree)?tree.tree.filter(entry=>entry.path!==missing):tree.tree}:{tree:[],truncated:false})}
     const path=decodeURIComponent(url.split('/contents/')[1]?.split('?')[0]??'')
     assert.ok(url.includes(`ref=${sha}`),'all files must use the pinned commit')
     if(path===missing)return json({},404)
+    if(largeClient && path==='lib/client.js')return json({type:'file',encoding:'base64',content:'x'.repeat(600000)})
     return json({type:'file',encoding:'base64',size:20,content:Buffer.from(path==='package.json'?JSON.stringify(pkg):'// built artifact').toString('base64')})
   }})
   return {source:new GithubSource({http,token:'explicit-token'}),urls}
@@ -182,4 +252,88 @@ test('GitHub request budget marks large export maps unverified',async()=>{
   const pkg={...manifest,exports:Object.fromEntries(Array.from({length:20},(_,i)=>[`./x${i}`,`./lib/x${i}.js`]))}
   const {source,urls}=githubFixture({pkg});const row=await source.detail('alice/demo')
   assert.equal(row.validation,'unverified');assert.ok(urls.length<=12)
+})
+
+const patternManifest={...manifest,exports:{...manifest.exports,'./package.json':'./package.json','./locale/*.json':'./locale/*.json'}}
+const localeTree={truncated:false,tree:[...['lib/index.js','lib/client.js','package.json','cordis.patch.yml'].map(path=>({path,type:'blob',mode:'100644'})),{path:'locale/zh-CN.json',type:'blob',mode:'100644'},{path:'locale/en-US.json',type:'blob',mode:'100644'}]}
+
+test('GitHub qualifies wildcard exports against files at the pinned commit',async()=>{
+  const {source,urls}=githubFixture({pkg:patternManifest,tree:localeTree})
+  const row=await source.detail('alice/demo')
+  assert.equal(row.validation,'bundle');assert.equal(row.spec,`github:alice/demo#${sha}`)
+  assert.equal(urls.filter(([url])=>url.includes('/git/trees/')).length,1)
+  assert.ok(!urls.some(([url])=>url.includes('/contents/locale/')))
+})
+
+test('GitHub supports nested wildcard targets and shares one tree across patterns',async()=>{
+  const pkg={...patternManifest,exports:{...patternManifest.exports,'./feature/*':'./features/*/index.js'}}
+  const tree={...localeTree,tree:[...localeTree.tree,{path:'features/tools/nested/index.js',type:'blob',mode:'100644'}]}
+  const {source,urls}=githubFixture({pkg,tree})
+  assert.equal((await source.detail('alice/demo')).validation,'bundle')
+  assert.equal(urls.filter(([url])=>url.includes('/git/trees/')).length,1)
+  assert.ok(urls.length<=12)
+})
+
+test('GitHub rejects wildcard exports without matching regular files',async()=>{
+  for(const tree of [{tree:[],truncated:false},{tree:[{path:'locale/zh-CN.json.bak',type:'blob',mode:'100644'}]},{tree:[{path:'locale/zh-CN.json',type:'tree',mode:'040000'}]},{tree:[{path:'locale/zh-CN.json',type:'blob',mode:'120000'}]}]){
+    const {source}=githubFixture({pkg:patternManifest,tree})
+    const row=await source.detail('alice/demo')
+    assert.equal(row.validation,'missing-artifacts');assert.equal(row.spec,null)
+  }
+})
+
+test('GitHub refuses incomplete or malformed wildcard tree responses',async()=>{
+  for(const tree of [{...localeTree,truncated:true},{tree:null},{}]){
+    const {source}=githubFixture({pkg:patternManifest,tree})
+    const row=await source.detail('alice/demo')
+    assert.equal(row.validation,'unverified');assert.equal(row.spec,null)
+  }
+})
+
+test('GitHub wildcard support preserves required file and path safety checks',async()=>{
+  for(const missing of ['lib/index.js','lib/client.js','cordis.patch.yml']){
+    const {source}=githubFixture({pkg:patternManifest,tree:localeTree,missing})
+    const row=await source.detail('alice/demo')
+    assert.equal(row.validation,'missing-artifacts');assert.equal(row.spec,null)
+  }
+  for(const target of ['../locale/*.json','./locale/../*.json','/locale/*.json','./locale/?.json','./locale/*.json#fragment']){
+    const pkg={...manifest,exports:{...manifest.exports,'./locale/*':target}}
+    const {source}=githubFixture({pkg,tree:localeTree})
+    const row=await source.detail('alice/demo')
+    assert.equal(row.validation,'unverified');assert.equal(row.spec,null)
+  }
+})
+
+
+test('GitHub verifies wildcard exports in a repository tree larger than a single file response',async()=>{
+  const tree={truncated:false,tree:[...Array.from({length:8000},(_,i)=>({path:`vendor/channel-${i}/source/index.js`,type:'blob',mode:'100644',sha:'b'.repeat(40)})),...localeTree.tree]}
+  const {source}=githubFixture({pkg:patternManifest,tree})
+  const row=await source.detail('alice/demo')
+  assert.equal(row.validation,'bundle');assert.equal(row.spec,`github:alice/demo#${sha}`)
+})
+
+
+test('GitHub uses tree metadata to qualify large client bundles without downloading their contents',async()=>{
+  const {source}=githubFixture({pkg:patternManifest,tree:localeTree,largeClient:true})
+  const row=await source.detail('alice/demo')
+  assert.equal(row.validation,'bundle');assert.equal(row.spec,`github:alice/demo#${sha}`)
+})
+
+
+test('GitHub repeats the same subpath replacement for every star in an export target',async()=>{
+  const pkg={...manifest,exports:{...manifest.exports,'./feature/*':'./features/*/copy-*.js'}}
+  for(const [path,validation] of [['features/tools/copy-tools.js','bundle'],['features/tools/copy-other.js','missing-artifacts']]){
+    const tree={...localeTree,tree:[...localeTree.tree,{path,type:'blob',mode:'100644'}]}
+    const {source}=githubFixture({pkg,tree})
+    assert.equal((await source.detail('alice/demo')).validation,validation)
+  }
+})
+
+
+test('GitHub bounds matching work for adversarial repeated-star export patterns',async()=>{
+  const pkg={...manifest,exports:{...manifest.exports,'./locale/*':'./locale/'+'a*'.repeat(12)+'z.json'}}
+  const tree={...localeTree,tree:[...localeTree.tree,{path:'locale/'+'a'.repeat(32)+'y.json',type:'blob',mode:'100644'}]}
+  const {source}=githubFixture({pkg,tree})
+  const row=await source.detail('alice/demo')
+  assert.equal(row.validation,'missing-artifacts');assert.equal(row.spec,null)
 })

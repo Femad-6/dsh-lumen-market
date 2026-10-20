@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Market } from '../lib/host/market.js'
+import {MarketError} from '../lib/host/core.js'
 const pkg={name:'demo',version:'2.0.0',description:'Useful',dsh:{bundle:{patch:'x.yml'}}}
 function setup({result={application:'applied',changed:true},installed=[],failGit=false}={}){
   let now=0;const calls=[];const rows=installed
@@ -14,6 +15,133 @@ function setup({result={application:'applied',changed:true},installed=[],failGit
 test('combined search retains npm result when GitHub fails',async()=>{
   const {market}=setup({failGit:true});const r=await market.search({q:'demo'})
   assert.equal(r.rows[0].name,'demo');assert.equal(r.errors[0].source,'github');assert.equal(r.errors[0].retryAt,1234)
+})
+
+test('weekly ranking preserves its 50-candidate order, coverage and cached results across market pages',async()=>{
+  const {market}=setup();let failed=false
+  const rows=Array.from({length:50},(_,i)=>({id:`github:alice/p${i}`,name:`alice/p${i}`,repo:`alice/p${i}`,source:'github',weeklyStars:50-i}))
+  market.github.search=async(q,page,{sort})=>{
+    assert.equal(q,'');assert.equal(sort,'weekly-stars')
+    if(failed)throw new MarketError('network',502)
+    return {rows:rows.slice((page-1)*21,page*21),hasMore:page<3,weekly:{candidateLimit:50,candidates:50,measured:50,failed:0}}
+  }
+  const first=await market.search({q:'',source:'github',sort:'weekly-stars'})
+  const last=await market.search({q:'',source:'github',sort:'weekly-stars',page:3})
+  assert.equal(first.rows[0].weeklyStars,50);assert.equal(first.sources.github.weekly.candidates,50)
+  assert.equal(last.rows.length,8);assert.equal(last.hasMore,false)
+  failed=true
+  const cached=await market.search({q:'',source:'github',sort:'weekly-stars',force:true})
+  assert.equal(cached.stale,true);assert.equal(cached.rows[0].weeklyStars,50)
+})
+
+test('verified npm target installs from cache on network failures at inspection and execution',async()=>{
+  const {market,npm,calls,setNow}=setup()
+  await market.detail({source:'npm',name:'demo',version:'2.0.0'})
+  setNow(500)
+  npm.detail=async()=>{throw new MarketError('network',502)}
+  market.manager().inspect=async()=>{throw new Error('cached target must not require remote preflight')}
+  const preview=await market.inspect({source:'npm',name:'demo',version:'2.0.0'})
+  assert.equal(preview.preview.cachedMetadata.checkedAt,0)
+  assert.equal(preview.preview.cachedMetadata.reason,'network')
+  const result=await market.execute('install',{previewId:preview.previewId})
+  assert.equal(result.ok,true);assert.equal(result.cachedMetadata.checkedAt,0)
+  assert.deepEqual(calls,['demo@2.0.0'])
+})
+
+test('cached GitHub target stays pinned even if a different commit is cached before execution',async()=>{
+  const {market,calls}=setup()
+  await market.detail({source:'github',repo:'alice/demo'})
+  market.github.detail=async()=>{throw new MarketError('rate-limited',502)}
+  const preview=await market.inspect({source:'github',repo:'alice/demo'})
+  assert.equal(preview.preview.cachedMetadata.reason,'rate-limited')
+  const context=await market.context()
+  const newer={...preview.preview,sha:'b'.repeat(40),spec:'github:alice/demo#'+'b'.repeat(40)}
+  delete newer.cachedMetadata
+  market.saveVerified(newer,context)
+  await market.execute('install',{previewId:preview.previewId})
+  assert.deepEqual(calls,['github:alice/demo#'+'a'.repeat(40)])
+})
+
+test('search candidates alone, wrong versions and different profiles cannot authorize cached installation',async()=>{
+  const {market,npm,calls}=setup()
+  await market.search({source:'npm'})
+  const live=npm.detail
+  npm.detail=async()=>{throw new MarketError('network',502)}
+  await assert.rejects(market.inspect({source:'npm',name:'demo'}),e=>e.code==='network')
+  npm.detail=live;await market.detail({source:'npm',name:'demo',version:'2.0.0'})
+  npm.detail=async()=>{throw new MarketError('timeout',502)}
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'1.0.0'}),e=>e.code==='timeout')
+  market.profile.snapshot=async()=>({profile:{dir:'other-profile'},runtimeVersion:'0.2.0',rows:[]})
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='timeout')
+  assert.equal(calls.length,0)
+})
+
+test('cache never bypasses current compatibility, installation state or definitive remote rejection',async()=>{
+  for(const failure of ['not-found','invalid-manifest','disposed']){
+    const {market,npm,calls}=setup()
+    await market.detail({source:'npm',name:'demo',version:'2.0.0'})
+    npm.detail=async()=>{throw new MarketError(failure,502)}
+    await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code===failure)
+    assert.equal(calls.length,0)
+  }
+  const {market,npm,rows,calls}=setup()
+  await market.detail({source:'npm',name:'demo',version:'2.0.0'})
+  npm.detail=async()=>{throw new MarketError('network',502)}
+  rows.push({name:'demo',source:'registry',installed:'2.0.0'})
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='already-installed')
+  rows.length=0
+  market.profile.snapshot=async()=>({profile:{dir:'test'},runtimeVersion:null,rows:[]})
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='not-installable')
+  assert.equal(calls.length,0)
+})
+
+test('a definitive manifest or official rejection invalidates cached authorization for later network failures',async()=>{
+  for(const rejection of ['manifest','official']){
+    const {market,npm}=setup()
+    await market.detail({source:'npm',name:'demo',version:'2.0.0'})
+    if(rejection==='manifest')npm.detail=async()=>{throw new MarketError('not-found',404)}
+    else market.manager().inspect=async()=>({problem:'incompatible',reason:'Rejected by host'})
+    await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}))
+    npm.detail=async()=>{throw new MarketError('network',502)}
+    await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='network')
+    await assert.rejects(market.inspect({source:'npm',name:'demo'}),e=>e.code==='network')
+  }
+})
+
+test('cached previews recheck the active profile before starting the manager',async()=>{
+  const {market,npm,calls}=setup()
+  const preview=await market.inspect({source:'npm',name:'demo'})
+  npm.detail=async()=>{throw new MarketError('network',502)}
+  market.profile.snapshot=async()=>({profile:{dir:'other-profile'},runtimeVersion:'0.2.0',rows:[]})
+  await assert.rejects(market.execute('install',{previewId:preview.previewId}),e=>e.code==='preview-stale')
+  assert.equal(calls.length,0)
+})
+
+test('official rejection revokes old previews and a later detail read cannot silently restore cached installation',async()=>{
+  const {market,npm,calls}=setup()
+  const preview=await market.inspect({source:'npm',name:'demo',version:'2.0.0'})
+  market.manager().inspect=async()=>({problem:'incompatible'})
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='official-inspect-rejected')
+  await market.detail({source:'npm',name:'demo',version:'2.0.0'})
+  const live=npm.detail
+  npm.detail=async()=>{throw new MarketError('network',502)}
+  await assert.rejects(market.execute('install',{previewId:preview.previewId}),e=>e.code==='preview-stale')
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='network')
+  assert.equal(calls.length,0)
+  npm.detail=live;market.manager().inspect=async()=>({kind:'registry'})
+  await market.inspect({source:'npm',name:'demo',version:'2.0.0'})
+  npm.detail=async()=>{throw new MarketError('network',502)}
+  assert.ok((await market.inspect({source:'npm',name:'demo',version:'2.0.0'})).preview.cachedMetadata)
+})
+
+test('an incompatible online manifest invalidates an older compatible cache of the same version',async()=>{
+  const {market,npm}=setup()
+  await market.detail({source:'npm',name:'demo',version:'2.0.0'})
+  const live=npm.detail
+  npm.detail=async(...args)=>{const row=await live(...args);return {...row,manifest:{...row.manifest,peerDependencies:{'@deepseek-ai/dsh':'>=99.0.0'}}}}
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='not-installable')
+  npm.detail=async()=>{throw new MarketError('network',502)}
+  await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='network')
 })
 
 test('discovery fills 21 visible cards after installed filtering and pagination never repeats them',async()=>{

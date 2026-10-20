@@ -17,6 +17,12 @@ test('all requests require header and writes require loopback',async()=>{
   assert.equal((await invoke({path:'/install',method:'POST',remote:'192.0.2.2',body:'{}'})).statusCode,403)
   assert.equal((await invoke({method:'OPTIONS'})).statusCode,405)
 })
+
+test('weekly stars sorting reaches the search API with an empty keyword',async()=>{
+  const result=await invoke({path:'/search?source=github&sort=weekly-stars&q='})
+  assert.equal(result.statusCode,200)
+  assert.equal(result.body.q.sort,'weekly-stars');assert.equal(result.body.q.q,'')
+})
 test('route rejects bad pagination/unknown methods/oversized or malformed bodies',async()=>{
   assert.equal((await invoke({path:'/search?page=abc'})).statusCode,400)
   assert.equal((await invoke({path:'/inspect',method:'POST',body:'{'})).statusCode,400)

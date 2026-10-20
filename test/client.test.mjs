@@ -15,6 +15,82 @@ function client(fetchImpl,{cachedFetch,localStorage}={}){
 const row={id:'npm:demo',name:'demo',source:'npm',description:'A useful plugin <img src=x onerror=alert(1)>',descriptionSource:'package.json',version:'1.0.0',validation:'bundle',compatibility:{verdict:'compatible'},links:{readme:'https://github.com/alice/demo',npm:'https://www.npmjs.com/package/demo'},installable:true}
 const response=data=>Promise.resolve(new Response(JSON.stringify(data)))
 
+test('one-click install checks an unverified GitHub target and consumes only its server preview once',async()=>{
+  const posts=[];let finishInspect,finishInstall
+  const store=client((url,init)=>{
+    if(init.method==='POST')posts.push([url,JSON.parse(init.body)])
+    if(url.endsWith('/inspect'))return new Promise(resolve=>finishInspect=resolve)
+    if(url.endsWith('/install'))return new Promise(resolve=>finishInstall=resolve)
+    return response({rows:[],errors:[]})
+  }).createStore()
+  const candidate={source:'github',repo:'alice/demo',name:'alice/demo',validation:'unverified',installable:false}
+  try{
+    const pending=store.install(candidate)
+    assert.equal(store.get().busy,true)
+    await store.install(candidate)
+    assert.equal(posts.length,1)
+    finishInspect(new Response(JSON.stringify({previewId:'pinned-server-target',preview:{name:'demo',source:'github',action:'install',spec:'github:alice/demo#'+'a'.repeat(40)}})))
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.deepEqual(posts.map(([url,body])=>[url,body]),[
+      ['/api/lumen-market/inspect',{action:'install',source:'github',name:'alice/demo',repo:'alice/demo'}],
+      ['/api/lumen-market/install',{previewId:'pinned-server-target'}]
+    ])
+    assert.equal(store.get().preview,null)
+    assert.equal(store.get().executing,true)
+    await store.install(candidate);assert.equal(posts.length,2)
+    finishInstall(new Response(JSON.stringify({ok:true,application:'restart-required',pendingRestart:['demo']})))
+    await pending
+    assert.equal(store.get().result.application,'restart-required')
+    assert.equal(store.get().pendingRestart[0],'demo')
+    assert.equal(store.get().busy,false)
+  }finally{store.dispose()}
+})
+
+test('one-click install stops on inspection errors and can retry',async()=>{
+  let attempts=0,installs=0
+  const store=client(url=>{
+    if(url.endsWith('/inspect')){attempts++;return Promise.resolve(new Response(JSON.stringify({code:'not-installable',validation:'missing-artifacts'}),{status:409}))}
+    if(url.endsWith('/install'))installs++
+    return response({rows:[],errors:[]})
+  }).createStore()
+  try{
+    await store.install(row)
+    assert.equal(store.get().error.code,'not-installable');assert.equal(store.get().busy,false)
+    assert.equal(store.get().preview,null);assert.equal(installs,0)
+    await store.install(row);assert.equal(attempts,2)
+  }finally{store.dispose()}
+})
+
+test('navigation cancels a pending one-click check without installing a stale target',async()=>{
+  let finish;let installs=0
+  const store=client(url=>{
+    if(url.endsWith('/inspect'))return new Promise(resolve=>finish=resolve)
+    if(url.endsWith('/install'))installs++
+    return response({rows:[],errors:[]})
+  }).createStore()
+  try{
+    const pending=store.install(row);await store.selectTab('installed')
+    finish(new Response(JSON.stringify({previewId:'stale',preview:{...row,action:'install'}})));await pending
+    assert.equal(installs,0);assert.equal(store.get().busy,false)
+  }finally{store.dispose()}
+})
+
+test('one-click install preserves official installation failures and releases the operation',async()=>{
+  for(const httpFailure of [false,true]){
+    const store=client(url=>{
+      if(url.endsWith('/inspect'))return response({previewId:'failed-target',preview:{...row,action:'install'}})
+      if(url.endsWith('/install'))return Promise.resolve(new Response(JSON.stringify(httpFailure?{code:'management-required'}:{ok:false,application:'failed',packageResult:{kind:'network',output:'Connection failed'}}),{status:httpFailure?503:200}))
+      return response({rows:[],errors:[]})
+    }).createStore()
+    try{
+      await store.install(row)
+      if(httpFailure)assert.equal(store.get().error.code,'management-required')
+      else{assert.equal(store.get().result.ok,false);assert.equal(store.get().result.packageResult.kind,'network')}
+      assert.equal(store.get().busy,false);assert.equal(store.get().executing,false);assert.equal(store.get().preview,null)
+    }finally{store.dispose()}
+  }
+})
+
 test('store ignores out-of-order search responses and sends CSRF header',async()=>{
   const resolvers=[]
   const module=client((url,init)=>{assert.equal(init.headers['x-dsh-lumen-market'],'1');return new Promise(r=>resolvers.push(r))})
@@ -54,6 +130,132 @@ test('real React page shows descriptions, safe document links and requires previ
   assert.equal([...doc.querySelectorAll('button')].filter(b=>b.textContent==='升级预览').length,0)
   await click('可更新');assert.ok(doc.body.textContent.includes('demo-failed'));assert.ok(doc.body.textContent.includes('network'))
 })
+test('cards and details offer one-click install while loading avoids a false rejection',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const candidate={id:'github:alice/demo',name:'alice/demo',repo:'alice/demo',source:'github',validation:'unverified',installable:false}
+  let finishDetail,installs=0;const posts=[]
+  const module=client((url,init)=>{
+    if(url.includes('/detail'))return new Promise(resolve=>finishDetail=resolve)
+    if(init.method==='POST')posts.push(url)
+    if(url.endsWith('/inspect'))return response({previewId:'ui-target',preview:{...row,action:'install'}})
+    if(url.endsWith('/install')){installs++;return response({ok:true,application:'applied'})}
+    return response({rows:[candidate,{...row,id:'npm:blocked',name:'blocked',validation:'missing-artifacts',installable:false},{...row,id:'installed:local',source:'local'}],errors:[]})
+  })
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document,button=(scope,text)=>[...scope.querySelectorAll('button')].find(b=>b.textContent===text)
+  const cards=doc.querySelectorAll('.lm-card')
+  assert.ok(button(cards[0],'一键安装'))
+  assert.equal(button(cards[1],'一键安装'),undefined)
+  await act(async()=>button(cards[0],'查看详情').click())
+  assert.equal(doc.querySelector('.lm-detail').textContent.includes('当前目标尚不具备安装条件'),false)
+  assert.equal(button(doc.querySelector('.lm-detail'),'一键安装').disabled,true)
+  await act(async()=>finishDetail(new Response(JSON.stringify(candidate))))
+  await act(async()=>button(doc.querySelector('.lm-detail'),'一键安装').click())
+  assert.equal(installs,1);assert.equal(doc.querySelector('.lm-preview'),null)
+  await act(async()=>button(doc.querySelector('.lm-card'),'一键安装').click())
+  assert.equal(installs,2)
+  assert.deepEqual(posts,['/api/lumen-market/inspect','/api/lumen-market/install','/api/lumen-market/inspect','/api/lumen-market/install'])
+})
+
+test('cached installation displays the saved check time for one-click operations',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const cachedMetadata={checkedAt:123000,reason:'network'}
+  const module=client(url=>response(url.endsWith('/inspect')?{previewId:'cached',preview:{...row,action:'install',cachedMetadata}}:url.endsWith('/install')?{ok:true,application:'applied',cachedMetadata}:{rows:[row],errors:[]}))
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document
+  await act(async()=>[...doc.querySelectorAll('button')].find(b=>b.textContent==='一键安装').click())
+  assert.ok(doc.body.textContent.includes('使用缓存安装'))
+  assert.ok(doc.body.textContent.includes(new Date(123000).toLocaleString()))
+  await act(async()=>[...doc.querySelectorAll('button')].find(b=>b.textContent==='关闭提示').click())
+  assert.equal(doc.body.textContent.includes('使用缓存安装'),false)
+})
+
+test('empty discovery offers a weekly star ranking with counts, scope and persisted controls',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const queries=[],saved=new Map(),weekly={candidateLimit:50,candidates:50,measured:49,failed:1,checkedAt:123000}
+  const module=client(url=>{
+    if(url.includes('/search?'))queries.push(new URL(url,'http://localhost').searchParams)
+    return response({rows:[{...row,weeklyStars:42},{...row,id:'npm:unknown',name:'unknown',weeklyStars:null}],errors:[],sources:{github:{weekly}},hasMore:true})
+  },{localStorage:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)}})
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document,sort=doc.querySelector('select[aria-label="排序"]')
+  assert.ok([...sort.options].some(option=>option.value==='weekly-stars'))
+  await act(async()=>{sort.value='weekly-stars';sort.dispatchEvent(new dom.window.Event('change',{bubbles:true}))})
+  assert.equal(queries.at(-1).get('q'),'');assert.equal(queries.at(-1).get('source'),'github');assert.equal(queries.at(-1).get('sort'),'weekly-stars')
+  assert.ok(doc.body.textContent.includes('近7天 +42'))
+  assert.ok(doc.body.textContent.includes('近7天：未知'))
+  assert.ok(doc.body.textContent.includes('49 / 50'))
+  assert.ok(doc.body.textContent.includes('最多 50'))
+  await act(async()=>[...doc.querySelectorAll('button')].find(button=>button.textContent==='下一页').click())
+  assert.equal(queries.at(-1).get('sort'),'weekly-stars')
+  const restored=module.createStore();assert.equal(restored.get().sort,'default');restored.dispose()
+})
+
+test('installed search filters locally and clears its keyword after switching tabs',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const requests=[],installed=[{id:'installed:skin',name:'dsh-dream-skin',description:'主题皮肤',source:'registry'},{id:'installed:notes',name:'dsh-notes',description:'Searchable Markdown notebook',source:'local'}]
+  const module=client(url=>{requests.push(url);return response({rows:url.includes('/search?')?[row]:installed,errors:[]})})
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document,click=async text=>{await act(async()=>[...doc.querySelectorAll('button')].find(button=>button.textContent===text).click())}
+  await click('已安装')
+  const input=doc.querySelector('input[aria-label="搜索已安装插件"]');assert.ok(input)
+  const requestCount=requests.length
+  const type=async value=>{await act(async()=>{Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new dom.window.Event('input',{bubbles:true}))})}
+  await type('  DREAM-SKIN  ')
+  assert.equal(doc.querySelectorAll('.lm-card').length,1);assert.ok(doc.querySelector('.lm-card').textContent.includes('dsh-dream-skin'))
+  await type('markdown');assert.equal(doc.querySelectorAll('.lm-card').length,1);assert.ok(doc.querySelector('.lm-card').textContent.includes('dsh-notes'))
+  await type('皮肤');assert.equal(doc.querySelectorAll('.lm-card').length,1)
+  await type('not-found');assert.equal(doc.querySelectorAll('.lm-card').length,0)
+  assert.ok(doc.body.textContent.includes('没有找到匹配的已安装插件'))
+  assert.equal(requests.length,requestCount,'typing must not request remote data')
+  await click('清空搜索');assert.equal(input.value,'');assert.equal(doc.querySelectorAll('.lm-card').length,2)
+  await type('skin');await click('发现');assert.equal(doc.querySelectorAll('.lm-card').length,1);assert.ok(doc.querySelector('.lm-card').textContent.includes('demo'))
+  await click('已安装');assert.equal(doc.querySelector('input[aria-label="搜索已安装插件"]').value,'');assert.equal(doc.querySelectorAll('.lm-card').length,2)
+})
+
+test('official already-installed upgrade failure explains the running-profile restriction',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const upgradable={...row,id:'installed:demo',source:'registry',installed:'1.0.0',latest:'2.0.0',upgradeable:true}
+  const module=client(url=>response(url.endsWith('/inspect')?{previewId:'upgrade',preview:{...upgradable,action:'upgrade',spec:'demo@2.0.0'}}:url.endsWith('/upgrade')?{ok:false,application:'failed',error:{code:'already-installed'}}:{rows:url.includes('/search?')?[]:[upgradable],errors:[]}))
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document,click=async text=>{await act(async()=>[...doc.querySelectorAll('button')].find(button=>button.textContent===text).click())}
+  await click('已安装');await click('升级预览');await click('确认升级')
+  assert.ok(doc.body.textContent.includes('停止当前配置'))
+  assert.ok(doc.body.textContent.includes('官方插件管理器升级'))
+  assert.equal(doc.body.textContent.includes('请求失败 · already-installed'),false)
+  assert.ok(doc.querySelector('.lm-card').textContent.includes('1.0.0'))
+})
+
 test('store ignores stale detail responses when user opens another plugin',async()=>{
   const pending=[];const module=client(()=>new Promise(r=>pending.push(r)))
   const store=module.createStore(),first=store.open({...row,name:'old'}),second=store.open({...row,name:'new'})
@@ -222,13 +424,13 @@ test('late installed background results cannot replace a newer discover search',
   assert.equal(store.get().data.rows[0].name,'new-result');store.dispose()
 })
 
-test('filters are restored per tab and discovery filters cannot empty installed data',async()=>{
+test('switching tabs resets discovery filters without emptying installed data',async()=>{
   const store=client(()=>response({rows:[],errors:[]})).createStore()
   store.filter({onlyCompatible:true})
   await store.selectTab('installed')
   assert.equal(store.get().onlyCompatible,false)
   await store.selectTab('discover')
-  assert.equal(store.get().onlyCompatible,true);store.dispose()
+  assert.equal(store.get().onlyCompatible,false);store.dispose()
 })
 
 test('client monitors its preview operation and delegates cancellation without aborting the install result',async()=>{
@@ -356,13 +558,51 @@ test('local snapshot appears before remote completion and a late cache cannot ov
   assert.equal(late.get().data.rows[0].name,'demo');late.dispose()
 })
 
-test('last successful discovery controls survive recreation without persisting result or credential data in browser storage',async()=>{
+test('recreating the market resets discovery controls and discards old stored keywords',async()=>{
   const values=new Map(),localStorage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)}
   let store=client(()=>response({ok:true,rows:[row],errors:[]}),{localStorage}).createStore()
   await store.search('market','github',2,false,'stars');store.dispose()
   store=client(()=>response({rows:[],errors:[]}),{localStorage}).createStore()
-  assert.equal(store.get().q,'market');assert.equal(store.get().source,'github');assert.equal(store.get().sort,'stars');assert.equal(store.get().page,2)
+  assert.equal(store.get().q,'');assert.equal(store.get().source,'all');assert.equal(store.get().sort,'default');assert.equal(store.get().page,1)
+  assert.deepEqual(Object.keys(JSON.parse(values.get('lumenMarket.discovery'))).sort(),['sort','source'])
   assert.equal(store.get().data,null)
+  store.dispose()
+})
+
+test('discovery keywords and filtered rows clear on tab changes and when returning to the market',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const queries=[]
+  const module=client(url=>{
+    if(url.includes('/search?')){const q=new URL(url,'http://localhost').searchParams.get('q');queries.push(q);return response({rows:q?[row]:[row,{...row,id:'npm:other',name:'other'}],errors:[]})}
+    return response({rows:[],errors:[]})
+  },{localStorage:{getItem:()=>JSON.stringify({q:'old-query',source:'github',sort:'stars',page:4}),setItem(){}}})
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  const doc=dom.window.document,click=async text=>{await act(async()=>[...doc.querySelectorAll('button')].find(b=>b.textContent===text).click())}
+  await act(async()=>root.render(React.createElement(Page)))
+  const input=()=>doc.querySelector('input[aria-label="插件关键词、owner/repo 或 GitHub 仓库链接"]')
+  assert.equal(input().value,'');assert.equal(queries.at(-1),'')
+  const search=async()=>{
+    await act(async()=>{Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set.call(input(),'demo');input().dispatchEvent(new dom.window.Event('input',{bubbles:true}))})
+    await click('搜索');assert.equal(queries.at(-1),'demo');assert.equal(doc.querySelectorAll('.lm-card').length,1)
+  }
+  await search();await click('已安装');await click('发现')
+  assert.equal(input().value,'');assert.equal(queries.at(-1),'');assert.equal(doc.querySelectorAll('.lm-card').length,2)
+  assert.equal(doc.querySelector('select[aria-label="来源"]').value,'all');assert.equal(doc.querySelector('select[aria-label="排序"]').value,'default')
+  await search();await act(async()=>root.render(null));await act(async()=>root.render(React.createElement(Page)))
+  assert.equal(input().value,'');assert.equal(queries.at(-1),'');assert.equal(doc.querySelectorAll('.lm-card').length,2)
+})
+
+test('leaving the page invalidates late search responses without restoring the old query',async()=>{
+  let finish
+  const store=client(()=>new Promise(resolve=>finish=resolve)).createStore()
+  const pending=store.search('old');store.resetSearch()
+  finish(new Response(JSON.stringify({rows:[row],errors:[]})));await pending
+  assert.equal(store.get().q,'');assert.equal(store.get().page,1);assert.equal(store.get().data,null);assert.equal(store.get().status,'idle')
   store.dispose()
 })
 
