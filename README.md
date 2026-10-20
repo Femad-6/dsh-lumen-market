@@ -30,7 +30,7 @@
 dsh-lumen-market@0.5.2
 ```
 
-按官方管理器提示完成安装。需要支持官方插件管理器的 DeepSeek Harness；Node.js 22 或更高版本。
+按官方管理器提示完成安装。需要支持官方插件管理器的 DeepSeek Harness；Node.js `^22.19.0 || >=24.0.0`。
 
 安装后从侧栏打开「流明市场」，在发现页搜索插件，点击「一键安装」或先查看「安装预览」；在已安装页搜索、管理插件，在可更新页检查版本。按宿主提示正常退出并重启 DSH，使插件生效。
 
@@ -51,6 +51,12 @@ https://registry.npmjs.org/dsh-lumen-market/-/dsh-lumen-market-0.5.2.tgz
 - 截图中的背景和配色来自 DSH 宿主主题，不是插件自带皮肤。
 
 [更新记录](CHANGELOG.md)
+
+## 兼容性与权限
+
+Node.js 支持范围为 `^22.19.0 || >=24.0.0`；DSH 的明确版本声明和逐版本验收状态见 `package.json` 的 `dsh.compatibility`。本插件需要读取 Profile、写入本地缓存和访问 npm/GitHub，可选使用专用 GitHub Token，并通过官方管理器执行插件变更。建议商城采用 `user-reviewed` 策略；权限声明不代表自动审核通过。
+
+详细说明：[依赖、外部服务与失败边界](docs/STORE-REVIEW.md) · [隔离 Profile 验收结果](docs/STORE-VALIDATION.md)。
 
 ## 界面预览
 

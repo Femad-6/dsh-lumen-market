@@ -32,12 +32,13 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
-    "node": ">=22"
+    "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node tools/check.mjs",
-    "preview": "node tools/preview.mjs"
+    "preview": "node tools/preview.mjs",
+    "verify:profile": "node tools/verify-profile.mjs"
   },
   "dependencies": {
     "semver": "7.7.2"
@@ -60,6 +61,34 @@
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-sidebar"
       ]
+    },
+    "compatibility": {
+      "dsh": "0.2.1-rc.2",
+      "dshReleases": {
+        "0.2.1-alpha.5": "unknown",
+        "0.2.1-rc.1": "unknown",
+        "0.2.1-rc.2": "compatible"
+      },
+      "dshOperations": {
+        "0.2.1-rc.2": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed",
+          "rollback": "unknown"
+        },
+        "0.2.1-alpha.5": {
+          "install": "unknown",
+          "start": "unknown",
+          "uninstall": "unknown",
+          "rollback": "unknown"
+        },
+        "0.2.1-rc.1": {
+          "install": "unknown",
+          "start": "unknown",
+          "uninstall": "unknown",
+          "rollback": "unknown"
+        }
+      }
     }
   },
   "keywords": [

@@ -1,0 +1,17 @@
+{
+  "checkedAt": "2026-10-20T13:56:13.313Z",
+  "command": "npm audit --omit=dev --ignore-scripts --registry=https://registry.npmjs.org",
+  "runtimeDependency": {
+    "name": "semver",
+    "version": "7.7.2"
+  },
+  "vulnerabilities": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "independentSecurityAudit": false
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-20T13:56:45.999Z",
+  "platform": "win32",
+  "node": "v24.21.0",
+  "packageSha256": "4cbe46b194db6ff81417ca2eab03d769e07fb60e695050d02113e8ac15a30dd1",
+  "install": "passed",
+  "start": "passed",
+  "uninstall": "passed",
+  "rollback": "unknown",
+  "desktopUi": "not-tested",
+  "dshVersion": "0.2.1-rc.2",
+  "runtimeFilesSha256": "865a549bcbe51b930e8b62286d589ed618ff4d1dab9968a2726ca5eb995ec966",
+  "authenticatedHealthHttp": 200,
+  "installedInventoryHttp": 200,
+  "compositionRestored": true,
+  "rollbackScope": "failure rollback not tested",
+  "status": "passed",
+  "scope": "Official CLI web Profile on Windows; no desktop UI, failure rollback, or downstream plugin operation acceptance",
+  "runCommand": "node tools/verify-profile.mjs <official dsh@0.2.1-rc.2 lib/bin.js> <plugin tarball>",
+  "runtimeHashScope": "Sorted relative path + NUL + bytes + NUL for lib/** and cordis.patch.yml"
+}

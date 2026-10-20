@@ -1,0 +1,18 @@
+{
+  "toolRepository": "https://github.com/AI-Scarlett/build-dsh-plugin",
+  "toolCommit": "153ac8c77a492c7a69f280325b68f35004b79640",
+  "source": {
+    "status": "BLOCKED",
+    "staticScore": 74,
+    "blockers": [
+      "secret logging or Browser Client Host import detected"
+    ]
+  },
+  "packed": {
+    "status": "implementation-incomplete",
+    "staticScore": 74,
+    "blockers": []
+  },
+  "finding": "Source scanner misclassifies test/client.test.mjs node imports as browser imports. Test files are excluded from the shipped package.",
+  "independentSecurityAudit": false
+}
