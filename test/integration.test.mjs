@@ -41,7 +41,7 @@ async function fixture(t,mode){
   }
   const profile=new Profile({argv:['node',dir],env:{},moduleDir:''})
   const npm=new NpmSource({http:{json:async()=>({...pkg,version:'2.0.0'})}})
-  market=new Market({npm,github:{clear(){},token:null},profile,manager:()=>manager})
+  market=new Market({npm,github:{clear(){},token:null},profile,manager:()=>manager,upgradeCapability:()=>({supported:true})})
   const server=createServer(createRoute(market));await new Promise(r=>server.listen(0,'127.0.0.1',r))
   t.after(async()=>{finish?.();market.dispose();server.closeAllConnections();await new Promise(r=>server.close(r))})
   const headers={'x-dsh-lumen-market':'1','content-type':'application/json'},base=`http://127.0.0.1:${server.address().port}/api/lumen-market`

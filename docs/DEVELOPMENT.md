@@ -106,3 +106,21 @@ CI 在 Linux/Windows、Node 22/24 上执行语法与包入口检查、测试和�
 `DISCOVERY_PAGE_SIZE=21` 共用于 npm 的已验证结果分页和 GitHub 的 per_page。市场按查询维护串行扫描游标，对来源结果去重、过滤当前已安装项后再取显示页，全部来源每页总共21项。直接深页和并发请求使用同一索引边界。补齐扫描受上限约束，达到上限时返回 scanLimited 提示；来源耗尽时最后一页按实际数量展示。客户端「仅可安装」仍为额外页面内筛选，可能减少可见卡片数量。
 
 快照用 raw21/page21 前缀区分原始来源页和显示页，避免误用旧20项缓存页。宽屏无详情时采用三列，窄屏和详情旁列表响应式调整。
+
+## 升级能力与确切版本
+
+`updates` 的 `updateAvailable` 表示发现较新版本，`upgradeable` 还要求兼容并且宿主允许覆盖。Host 通过公开的 `ctx.get("hmr")` 判断当前官方管理器的运行中限制；能力未知时拒绝升级，不影响新安装。`health.upgrade` 返回该状态。UI 的可更新标签按新版信息过滤，不会隐藏受限项。
+
+`inspect` 和 `execute` 的 upgrade 路径均重新检查能力，返回 `upgrade-unavailable` 和原因；不能凭旧预览绕过。确切版本通过只读 `/detail?source=npm&name=...&version=...` 查验，用户确认后仍以确切版本生成预览和执行，不跟随浮动 latest。CLI 提示只从已校验包名、确切版本和标准 profiles 目录下的安全 Profile 名称生成；自定义路径不猜测命令。
+
+运行中受限时提供退出后升级说明，不自行修改宿主或禁用 HMR。发布等待期、镜像延迟和包管理器拒绝与运行中限制分开处理；升级失败不转换为自动卸载。只有能保留配置并可靠恢复旧版时才可另行设计经用户确认的重装事务，当前分步接口不作为该保证。
+
+隔离验收增加 `node tools/verify-profile.mjs <固定官方CLI> <本次tgz> --upgrade`：保留一次性 Profile 和失败记录，使用本地 1.0.0/2.0.0/不兼容 3.0.0 测试包，验证运行中门禁、退出后替换、配置/禁用状态/顺序保留、官方不兼容恢复及重启。它不升级真实主题，也不证明所有网络中断或进程崩溃均可恢复。
+
+## 经确认的一键卸载重装（2026-10-21）
+
+本节更新上节的降级策略。`upgradeMode` 为 direct 或 reinstall；运行中无法覆盖时，如官方可卸载、目标不是市场或官方组件且能保持 Bundle 顺序，可生成 reinstall 预览。执行请求还必须带 `reinstallConsent: true`，旧页面仅发送 previewId 不会触发卸载。模式变化、Profile 变化或未完成恢复记录都会拒绝旧预览。
+
+`Reinstaller` 仅调用官方 removeBundle/installBundle/setBundleEnabled，不自行删除插件目录、不直接重写 Profile 配置。准备阶段保存私有配置快照、校验新旧归档、重复检查文件哈希；阶段日志原子替换，终态只清理单个活动锁文件，所有归档和配置快照保留。失败后优先恢复旧版；模块文件部分缺失时仍可通过官方清理后恢复。无法恢复时返回 recovery-required 和备份位置，后续写操作失败关闭。
+
+安装使用已经校验的本地 target.tgz，恢复使用 previous.tgz，不在卸载后重新解析浮动 registry 内容。`reinstallOrigin` 只对本 Profile 的精确事务归档（含相对 file: 路径）和终态日志保留 npm 来源；实际 source 为 tarball。`npmInstalled` 用于识别这类合法来源，普通本地/Git 来源仍不可自动升级。`--reinstall` 隔离验收使用本地测试注册表和真实官方 HMR 服务，验证确认授权、活动插件的卸载安装、配置/顺序保留、失败恢复和后续版本查询。

@@ -9,7 +9,7 @@ function setup({result={application:'applied',changed:true},installed=[],failGit
   const github={detail:async repo=>({id:`github:${repo}`,name:'demo',repo,source:'github',sha:'a'.repeat(40),spec:`github:${repo}#${'a'.repeat(40)}`,manifest:pkg,validation:'bundle'}),search:async()=>{if(failGit)throw Object.assign(new Error('rate-limited'),{code:'rate-limited',extra:{retryAt:1234}});return {rows:[],total:0}},clear(){}}
   const manager={inspect:async()=>({kind:'registry'}),listVersionExemptions:async()=>({exemptions:{}}),installBundle:async spec=>{calls.push(spec);return typeof result==='function'?result():result}}
   const profile={resolution:()=>({dir:'test',rejected:[]}),snapshot:async()=>({profile:{dir:'test'},runtimeVersion:'0.2.0',rows})}
-  const market=new Market({npm,github,manager:()=>manager,profile,now:()=>now})
+  const market=new Market({npm,github,manager:()=>manager,upgradeCapability:()=>({supported:true}),profile,now:()=>now})
   return {market,calls,rows,npm,setNow:n=>now=n}
 }
 test('combined search retains npm result when GitHub fails',async()=>{
@@ -240,6 +240,113 @@ test('resolved official failure does not set restart while successful replacemen
 test('updates never qualifies local/git/alias and unknown disk version',async()=>{
   const {market}=setup({installed:[{name:'local',source:'local'},{name:'git',source:'git'},{name:'alias',source:'alias'},{name:'unknown',source:'registry',installed:null},{name:'new',source:'registry',installed:'1.0.0'}]})
   const r=await market.updates();assert.deepEqual(r.rows.filter(x=>x.upgradeable).map(x=>x.name),['new'])
+})
+
+test('running-profile updates remain visible but cannot reach upgrade preview or installer',async()=>{
+  const {market,calls}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true}]})
+  market.upgradeCapability=()=>({supported:false,reason:'profile-running'})
+  const [row]=(await market.updates()).rows
+  assert.equal(row.updateAvailable,true)
+  assert.equal(row.upgradeable,false)
+  assert.equal(row.upgradeBlockedReason,'profile-running')
+  await assert.rejects(market.inspect({action:'upgrade',source:'npm',name:'demo',version:'2.0.0'}),error=>error.code==='upgrade-unavailable')
+  assert.deepEqual(calls,[])
+})
+
+test('upgrade execution rechecks host capability after a successful preview',async()=>{
+  const {market,calls}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true}]})
+  market.upgradeCapability=()=>({supported:true})
+  const preview=await market.inspect({action:'upgrade',source:'npm',name:'demo',version:'2.0.0'})
+  market.upgradeCapability=()=>({supported:false,reason:'profile-running'})
+  await assert.rejects(market.execute('upgrade',{previewId:preview.previewId}),error=>error.code==='upgrade-unavailable')
+  assert.deepEqual(calls,[])
+})
+
+test('unknown upgrade capability fails closed without disabling fresh installations',async()=>{
+  const {market,calls}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true}]})
+  market.upgradeCapability=()=>{throw new Error('capability unavailable')}
+  assert.equal((await market.updates()).rows[0].upgradeable,false)
+  await assert.rejects(market.inspect({action:'upgrade',source:'npm',name:'demo',version:'2.0.0'}),error=>error.code==='upgrade-unavailable')
+  const fresh=await market.inspect({source:'npm',name:'other',version:'2.0.0'})
+  await market.execute('install',{previewId:fresh.previewId})
+  assert.deepEqual(calls,['other@2.0.0'])
+})
+
+test('upgrade instructions use a validated package version and the resolved profile name',async()=>{
+  const {market}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true}]})
+  const snapshot=market.profile.snapshot
+  market.profile.snapshot=async manager=>({...await snapshot(manager),profile:{dir:'D:/isolated-home/profiles/desktop'}})
+  market.upgradeCapability=()=>({supported:false,reason:'profile-running'})
+  assert.equal((await market.updates()).rows[0].upgradeCommand,'dsh plugin --profile desktop add demo@2.0.0')
+  market.profile.snapshot=async manager=>({...await snapshot(manager),profile:{dir:'D:/custom directory'}})
+  assert.equal((await market.updates()).rows[0].upgradeCommand,null,'do not guess a CLI profile for arbitrary directories')
+})
+
+test('an exact version can be checked separately from latest without starting installation',async()=>{
+  const {market,calls}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true}]})
+  market.upgradeCapability=()=>({supported:false,reason:'profile-running'})
+  const detail=await market.detail({source:'npm',name:'demo',version:'3.0.0'})
+  assert.equal(detail.version,'3.0.0')
+  assert.equal(detail.latest,'3.0.0')
+  assert.equal(detail.updateAvailable,true)
+  assert.equal(detail.upgradeable,false)
+  assert.equal(detail.upgradeBlockedReason,'profile-running')
+  assert.deepEqual(calls,[])
+})
+
+test('a reviewed explicit version remains pinned when latest names another version',async()=>{
+  const {market,calls}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true}]})
+  const selected=await market.detail({source:'npm',name:'demo',version:'3.0.0'})
+  assert.equal((await market.updates()).rows[0].latest,'2.0.0')
+  const preview=await market.inspect({action:'upgrade',source:'npm',name:'demo',version:selected.version})
+  await market.execute('upgrade',{previewId:preview.previewId})
+  assert.deepEqual(calls,['demo@3.0.0'])
+})
+
+test('failed upgrades never turn into an unapproved uninstall and reinstall',async()=>{
+  const {market}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true}],result:{application:'failed',changed:false,error:{code:'operation-error'},packageResult:{kind:'unknown',output:'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION'}}})
+  let removals=0
+  market.manager().removeBundle=async()=>{removals++;throw new Error('must retain the working version')}
+  const preview=await market.inspect({action:'upgrade',source:'npm',name:'demo',version:'2.0.0'})
+  const result=await market.execute('upgrade',{previewId:preview.previewId})
+  assert.equal(result.ok,false);assert.equal(removals,0)
+  assert.equal((await market.installed()).rows[0].installed,'1.0.0')
+})
+
+test('a supported reinstall plan requires explicit removal consent and is consumed once',async()=>{
+  const {market,calls}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true,removable:true}]})
+  market.upgradeCapability=()=>({supported:false,reason:'profile-running'})
+  market.manager().removeBundle=async()=>({application:'applied'})
+  market.manager().setBundleEnabled=async()=>({application:'applied'})
+  const snapshot=market.profile.snapshot
+  market.profile.snapshot=async manager=>({...await snapshot(manager),bundleOrder:['demo']})
+  let runs=0
+  market.reinstaller={pending:async()=>null,run:async()=>{runs++;return {ok:true,application:'applied',changed:true,upgradeMode:'reinstall'}}}
+  const row=(await market.updates()).rows[0]
+  assert.equal(row.upgradeable,true);assert.equal(row.upgradeMode,'reinstall')
+  const plan=await market.inspect({action:'upgrade',source:'npm',name:'demo',version:'2.0.0'})
+  assert.equal(plan.preview.upgradeMode,'reinstall')
+  await assert.rejects(market.execute('upgrade',{previewId:plan.previewId}),e=>e.code==='reinstall-consent-required')
+  assert.equal(runs,0)
+  assert.equal((await market.execute('upgrade',{previewId:plan.previewId,reinstallConsent:true})).ok,true)
+  assert.equal(runs,1);assert.deepEqual(calls,[])
+  await assert.rejects(market.execute('upgrade',{previewId:plan.previewId,reinstallConsent:true}),e=>e.code==='preview-expired')
+})
+
+test('reinstall cannot change bundle order or remove the market itself',async()=>{
+  const {market}=setup({installed:[{name:'demo',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true,removable:true}]})
+  market.upgradeCapability=()=>({supported:false,reason:'profile-running'})
+  market.manager().removeBundle=async()=>({application:'applied'})
+  market.manager().setBundleEnabled=async()=>({application:'applied'})
+  market.reinstaller={pending:async()=>null,run:async()=>{throw new Error('must not run')}}
+  const snapshot=market.profile.snapshot
+  market.profile.snapshot=async manager=>({...await snapshot(manager),bundleOrder:['demo','another']})
+  const row=(await market.updates()).rows[0]
+  assert.equal(row.upgradeable,false)
+  assert.equal(row.upgradeBlockedReason,'reinstall-order-unsupported')
+  market.profile.snapshot=async manager=>({...await snapshot(manager),bundleOrder:['dsh-lumen-market'],rows:[{name:'dsh-lumen-market',source:'registry',installed:'1.0.0',specifier:'1.0.0',bundle:true,removable:true}]})
+  const self=(await market.updates()).rows[0]
+  assert.equal(self.upgradeable,false);assert.equal(self.upgradeBlockedReason,'not-removable')
 })
 test('concurrent writes return busy; consumed previews cannot replay',async()=>{
   let release

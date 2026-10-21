@@ -15,6 +15,82 @@ function client(fetchImpl,{cachedFetch,localStorage}={}){
 const row={id:'npm:demo',name:'demo',source:'npm',description:'A useful plugin <img src=x onerror=alert(1)>',descriptionSource:'package.json',version:'1.0.0',validation:'bundle',compatibility:{verdict:'compatible'},links:{readme:'https://github.com/alice/demo',npm:'https://www.npmjs.com/package/demo'},installable:true}
 const response=data=>Promise.resolve(new Response(JSON.stringify(data)))
 
+test('checking an explicit version pins the reviewed target and performs no write',async()=>{
+  const requests=[]
+  const store=client((url,init)=>{requests.push([url,init.method]);return response({...row,version:'3.0.0',latest:'3.0.0',alreadyInstalled:true,updateAvailable:true,upgradeable:false,upgradeBlockedReason:'profile-running'})}).createStore()
+  await store.checkVersion({...row,installed:'1.0.0'},'3.0.0')
+  const target=new URL(requests[0][0],'http://localhost')
+  assert.equal(target.searchParams.get('version'),'3.0.0')
+  assert.equal(store.get().detail.latest,'3.0.0')
+  assert.equal(store.get().preview,null)
+  assert.equal(requests.some(([,method])=>method==='POST'),false)
+  store.dispose()
+})
+
+test('uninstall-and-reinstall upgrade sends removal consent only after the confirmation step',async()=>{
+  const posts=[]
+  const store=client((url,init)=>{
+    if(init.method==='POST')posts.push([url,JSON.parse(init.body)])
+    return response(url.endsWith('/inspect')?{previewId:'reinstall-plan',preview:{...row,action:'upgrade',upgradeMode:'reinstall',spec:'demo@2.0.0',fromVersion:'1.0.0'}}:url.endsWith('/upgrade')?{ok:true,application:'applied'}:{rows:[],errors:[]})
+  }).createStore()
+  await store.prepare({...row,installed:'1.0.0',latest:'2.0.0'},'upgrade')
+  assert.equal(posts.length,1)
+  assert.equal(store.get().preview.preview.upgradeMode,'reinstall')
+  await store.execute()
+  assert.deepEqual(posts[1],['/api/lumen-market/upgrade',{previewId:'reinstall-plan',reinstallConsent:true}])
+  store.dispose()
+})
+
+test('one-click upgrade visibly confirms removal and cancellation performs no upgrade',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const ready={...row,id:'installed:demo',source:'registry',installed:'1.0.0',latest:'2.0.0',updateAvailable:true,upgradeable:true,upgradeMode:'reinstall',removable:true},posts=[]
+  const module=client((url,init)=>{
+    if(init.method==='POST')posts.push([url,JSON.parse(init.body)])
+    return response(url.endsWith('/inspect')?{previewId:'reinstall-plan',preview:{...ready,action:'upgrade',fromVersion:'1.0.0',spec:'demo@2.0.0'}}:url.endsWith('/upgrade')?{ok:true,application:'applied'}:{rows:url.includes('/search')?[]:[ready],errors:[]})
+  })
+  let Page,dictionary
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document,click=async text=>act(async()=>[...doc.querySelectorAll('button')].find(b=>b.textContent===text).click())
+  await click('已安装');await click('一键升级')
+  assert.ok(doc.querySelector('.lm-preview').textContent.includes('卸载旧版并安装新版'))
+  assert.ok(doc.querySelector('.lm-preview').textContent.includes('demo@2.0.0'))
+  assert.equal(posts.length,1)
+  await click('取消');assert.equal(posts.length,1)
+  await click('一键升级');await click('确认卸载并升级')
+  assert.deepEqual(posts.at(-1),['/api/lumen-market/upgrade',{previewId:'reinstall-plan',reinstallConsent:true}])
+})
+
+test('unsupported upgrades stay in Updates with instructions instead of an active upgrade button',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const blocked={...row,id:'installed:demo',source:'registry',installed:'1.0.0',latest:'2.0.0',updateAvailable:true,upgradeable:false,upgradeBlockedReason:'profile-running',upgradeCommand:'dsh plugin --profile desktop add demo@2.0.0',verdict:'outdated'}
+  let posts=0,Page,dictionary
+  const module=client((url,init)=>{if(init.method==='POST')posts++;const selected=new URL(url,'http://localhost').searchParams.get('version');return response(url.includes('/detail')?selected?{...blocked,latest:selected,version:selected,upgradeCommand:'dsh plugin --profile desktop add demo@'+selected}:blocked:{rows:url.includes('/search')?[]:[blocked],errors:[]})})
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document
+  await act(async()=>[...doc.querySelectorAll('[role="tab"]')].find(tab=>tab.textContent==='可更新').click())
+  assert.equal(doc.querySelectorAll('.lm-card').length,1,'new versions must remain discoverable')
+  assert.equal([...doc.querySelectorAll('.lm-card button')].some(b=>b.textContent==='升级预览'),false)
+  assert.ok(doc.querySelector('.lm-card').textContent.includes('退出'))
+  assert.ok(doc.querySelector('.lm-card').textContent.includes('dsh plugin --profile desktop add demo@2.0.0'))
+  await act(async()=>[...doc.querySelectorAll('.lm-card button')].find(b=>b.textContent==='查看详情').click())
+  assert.ok(doc.querySelector('.lm-detail').textContent.includes('dsh plugin --profile desktop add demo@2.0.0'))
+  const input=doc.querySelector('.lm-detail input[aria-label="指定版本号"]')
+  await act(async()=>{input.value='3.0.0';input.dispatchEvent(new dom.window.Event('input',{bubbles:true}))})
+  await act(async()=>doc.querySelector('.lm-detail form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true})))
+  assert.ok(doc.querySelector('.lm-detail').textContent.includes('dsh plugin --profile desktop add demo@3.0.0'))
+  assert.equal(posts,0)
+})
+
 test('one-click install checks an unverified GitHub target and consumes only its server preview once',async()=>{
   const posts=[];let finishInspect,finishInstall
   const store=client((url,init)=>{
