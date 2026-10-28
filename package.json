@@ -1,8 +1,8 @@
 {
   "name": "dsh-lumen-market",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "流明市场：发现 npm 与 GitHub 插件，查看介绍与文档，通过官方管线安装和原地更新。",
-  "icon": "assets/icon.svg",
+  "icon": "assets/lumen-market.svg",
   "license": "MIT",
   "author": "Femad-6",
   "repository": {

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Market } from '../lib/host/market.js'
 import {MarketError} from '../lib/host/core.js'
-const pkg={name:'demo',version:'2.0.0',description:'Useful',dsh:{bundle:{patch:'x.yml'}}}
+const pkg={name:'demo',version:'2.0.0',description:'Useful',engines:{dsh:'>=0.2.0 <0.3.0'},dsh:{bundle:{patch:'x.yml'}}}
 function setup({result={application:'applied',changed:true},installed=[],failGit=false}={}){
   let now=0;const calls=[];const rows=installed
   const npm={detail:async(name,version)=>({id:`npm:${name}`,name,source:'npm',version:version??'2.0.0',manifest:{...pkg,name,version:version??'2.0.0'},validation:'bundle',spec:`${name}@${version??'2.0.0'}`,links:{},description:'Useful'}),search:async()=>({rows:[{id:'npm:demo',name:'demo',source:'npm',manifest:pkg,validation:'bundle',version:'2.0.0'}],total:1}),clear(){}}
@@ -12,6 +12,18 @@ function setup({result={application:'applied',changed:true},installed=[],failGit
   const market=new Market({npm,github,manager:()=>manager,upgradeCapability:()=>({supported:true}),profile,now:()=>now})
   return {market,calls,rows,npm,setNow:n=>now=n}
 }
+
+test('undeclared compatibility requires explicit consent and never claims compatible',async()=>{
+  const {market,calls,npm}=setup()
+  const detail=npm.detail
+  npm.detail=async(...args)=>{const row=await detail(...args);delete row.manifest.engines;delete row.manifest.peerDependencies;return row}
+  const plan=await market.inspect({source:'npm',name:'demo',version:'2.0.0'})
+  assert.equal(plan.preview.compatibility.verdict,'unknown')
+  assert.equal(plan.preview.requiresCompatibilityConsent,true)
+  await assert.rejects(market.execute('install',{previewId:plan.previewId}),e=>e.code==='compatibility-consent-required')
+  assert.deepEqual(calls,[])
+  assert.equal((await market.execute('install',{previewId:plan.previewId,compatibilityConsent:true})).ok,true)
+})
 test('combined search retains npm result when GitHub fails',async()=>{
   const {market}=setup({failGit:true});const r=await market.search({q:'demo'})
   assert.equal(r.rows[0].name,'demo');assert.equal(r.errors[0].source,'github');assert.equal(r.errors[0].retryAt,1234)
@@ -138,7 +150,7 @@ test('an incompatible online manifest invalidates an older compatible cache of t
   const {market,npm}=setup()
   await market.detail({source:'npm',name:'demo',version:'2.0.0'})
   const live=npm.detail
-  npm.detail=async(...args)=>{const row=await live(...args);return {...row,manifest:{...row.manifest,peerDependencies:{'@deepseek-ai/dsh':'>=99.0.0'}}}}
+  npm.detail=async(...args)=>{const row=await live(...args);return {...row,manifest:{...row.manifest,engines:{dsh:'>=99.0.0'}}}}
   await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='not-installable')
   npm.detail=async()=>{throw new MarketError('network',502)}
   await assert.rejects(market.inspect({source:'npm',name:'demo',version:'2.0.0'}),e=>e.code==='network')

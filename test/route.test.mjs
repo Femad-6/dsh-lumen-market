@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events'
 import { createRoute } from '../lib/host/route.js'
 import { apply } from '../lib/index.js'
 const market={health:()=>({ok:true}),search:async q=>({ok:true,q}),installed:async()=>({ok:true,rows:[]}),updates:async()=>({ok:true,rows:[]}),detail:async()=>({name:'demo'}),inspect:async()=>({previewId:'id'}),execute:async()=>({ok:false,application:'failed'}),operation:args=>({ok:true,args,operation:null}),cancel:async body=>({ok:true,status:'cancelled',operationId:body.operationId})}
+Object.assign(market,{listBackups:async()=>({ok:true,backups:[]}),createBackup:async()=>({ok:true,backup:{id:'created'}}),exportBackup:async id=>({ok:true,backup:{id}}),previewBackup:async options=>({ok:true,diff:{readOnly:true,options}})})
 function invoke({path='/health',method='GET',headers={'x-dsh-lumen-market':'1'},remote='127.0.0.1',body}={}){
   const req=new EventEmitter();req.url='/api/lumen-market'+path;req.method=method;req.headers=headers;req.socket={remoteAddress:remote}
   const res={headers:{},statusCode:200,setHeader(k,v){this.headers[k]=v},end(s){this.body=JSON.parse(s)}}
@@ -16,6 +17,15 @@ test('all requests require header and writes require loopback',async()=>{
   assert.equal((await invoke({headers:{}})).statusCode,403)
   assert.equal((await invoke({path:'/install',method:'POST',remote:'192.0.2.2',body:'{}'})).statusCode,403)
   assert.equal((await invoke({method:'OPTIONS'})).statusCode,405)
+})
+
+test('backup routes are loopback-only, same-origin and reject extra write arguments',async()=>{
+  assert.equal((await invoke({path:'/backups'})).statusCode,200)
+  assert.equal((await invoke({path:'/backups',remote:'192.0.2.1'})).statusCode,403)
+  assert.equal((await invoke({path:'/backup',method:'POST',body:'{}'})).body.backup.id,'created')
+  assert.equal((await invoke({path:'/backup',method:'POST',body:'{"path":"outside"}'})).statusCode,400)
+  assert.equal((await invoke({path:'/backup',method:'POST',body:'{}',headers:{'x-dsh-lumen-market':'1',host:'localhost',origin:'https://evil.invalid'}})).statusCode,403)
+  assert.equal((await invoke({path:'/backup-preview',method:'POST',body:'{"backupId":"id"}'})).body.diff.readOnly,true)
 })
 
 test('weekly stars sorting reaches the search API with an empty keyword',async()=>{

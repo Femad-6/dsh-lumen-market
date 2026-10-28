@@ -124,3 +124,11 @@ CI 在 Linux/Windows、Node 22/24 上执行语法与包入口检查、测试和�
 `Reinstaller` 仅调用官方 removeBundle/installBundle/setBundleEnabled，不自行删除插件目录、不直接重写 Profile 配置。准备阶段保存私有配置快照、校验新旧归档、重复检查文件哈希；阶段日志原子替换，终态只清理单个活动锁文件，所有归档和配置快照保留。失败后优先恢复旧版；模块文件部分缺失时仍可通过官方清理后恢复。无法恢复时返回 recovery-required 和备份位置，后续写操作失败关闭。
 
 安装使用已经校验的本地 target.tgz，恢复使用 previous.tgz，不在卸载后重新解析浮动 registry 内容。`reinstallOrigin` 只对本 Profile 的精确事务归档（含相对 file: 路径）和终态日志保留 npm 来源；实际 source 为 tarball。`npmInstalled` 用于识别这类合法来源，普通本地/Git 来源仍不可自动升级。`--reinstall` 隔离验收使用本地测试注册表和真实官方 HMR 服务，验证确认授权、活动插件的卸载安装、配置/顺序保留、失败恢复和后续版本查询。
+
+## 2026-10-28 兼容性与备份契约
+
+兼容性按已验证官方宿主的优先级执行：存在 engines.dsh 时不再合并 DSH peers；缺省时检查 DSH peers，workspace 范围指向当前宿主。Node 约束和 dsh.compatibility.dsh 作者声明独立校验。宿主的确切版本豁免可作用于有效 DSH 引擎/peer 冲突，不能绕过 Node、作者附加范围或格式错误。没有 DSH 要求时 verdict=unknown/reason=undeclared；可以请求官方预检，但一键安装会停在确认页，execute 还需 compatibilityConsent=true。宿主版本未知仍不具备安装条件。
+
+Reinstaller 在卸载前对旧版清单重新做同样判断，明确冲突且无适用豁免时返回 recovery-incompatible；原有 SHA 校验、确认同意、配置前置条件与恢复日志继续生效。
+
+ProfileBackups 保存当前 Profile 的私有文件副本，导出只经过严格白名单投影的便携清单；复制前检查完整 dependencies 映射，完成前再次比较文件哈希。恢复仅比较并返回 readOnly=true，包含 source/target 差异。详见 [BACKUPS.md](BACKUPS.md)。

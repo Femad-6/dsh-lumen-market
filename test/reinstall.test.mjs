@@ -73,6 +73,12 @@ test('market disposal during preparation stops before uninstall',async()=>{
   await assert.rejects(f.run({assertActive(){throw new MarketError('disposed',503)}}),error=>error.code==='disposed')
   assert.deepEqual(f.calls,[]);assert.equal(await f.service.pending(f.dir),null)
 })
+test('an old version incompatible with the current host is rejected before uninstall',async()=>{
+  const f=await fixture(),detail=f.service.npm.detail
+  f.service.npm.detail=async(...args)=>{const old=await detail(...args);old.manifest.engines={dsh:'>=99'};return old}
+  await assert.rejects(f.run({runtimeVersion:'0.2.1-rc.2'}),error=>error.code==='recovery-incompatible')
+  assert.deepEqual(f.calls,[])
+})
 test('market disposal after removal restores the old version instead of installing the new one',async()=>{
   const f=await fixture()
   const result=await f.run({assertActive(){if(f.calls.includes('remove'))throw new MarketError('disposed',503)}})

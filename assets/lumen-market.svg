@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">流明市场 · Lumen Market</title>
+  <desc id="desc">深夜蓝方形徽章，三个应用方块组成 L，一束暖金光芒点亮右上角。</desc>
+  <defs>
+    <linearGradient id="night" x1="24" y1="12" x2="218" y2="248" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#21334d"/>
+      <stop offset=".52" stop-color="#111d30"/>
+      <stop offset="1" stop-color="#080f1e"/>
+    </linearGradient>
+    <radialGradient id="aura" cx="166" cy="88" r="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffcf83" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#ffcf83" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ivory" x1="64" y1="66" x2="118" y2="122" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e5eef4"/>
+      <stop offset="1" stop-color="#a1b9cc"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="74" y1="134" x2="188" y2="194" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffe6ad"/>
+      <stop offset="1" stop-color="#f2b356"/>
+    </linearGradient>
+    <linearGradient id="light" x1="146" y1="54" x2="176" y2="125" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff7dd"/>
+      <stop offset=".5" stop-color="#ffdd91"/>
+      <stop offset="1" stop-color="#f4ae4e"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="248" height="248" rx="60" fill="url(#night)"/>
+  <rect x="4" y="4" width="248" height="248" rx="60" fill="url(#aura)"/>
+  <rect x="5" y="5" width="246" height="246" rx="59" fill="none" stroke="#d3e3f3" stroke-opacity=".13" stroke-width="2"/>
+  <g fill="#020714" opacity=".3" transform="translate(0 5)">
+    <rect x="62" y="64" width="55" height="55" rx="15"/>
+    <rect x="62" y="135" width="55" height="55" rx="15"/>
+    <rect x="133" y="135" width="55" height="55" rx="15"/>
+  </g>
+  <rect x="62" y="64" width="55" height="55" rx="15" fill="url(#ivory)"/>
+  <rect x="62" y="135" width="55" height="55" rx="15" fill="url(#gold)"/>
+  <rect x="133" y="135" width="55" height="55" rx="15" fill="url(#gold)"/>
+  <path d="M160 53c5 25 12 32 37 37-25 5-32 12-37 37-5-25-12-32-37-37 25-5 32-12 37-37Z" fill="url(#light)"/>
+  <path d="M160 72c2 11 6 15 18 18-12 2-16 6-18 18-3-12-7-16-18-18 11-3 15-7 18-18Z" fill="#fff8e5" opacity=".7"/>
+</svg>

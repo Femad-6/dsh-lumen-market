@@ -6,14 +6,63 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 
-function client(fetchImpl,{cachedFetch,localStorage}={}){
-  let definition;const window={localStorage,fetch:(url,init)=>url.includes('/search-cache?')?(cachedFetch?cachedFetch(url,init):response({cacheHit:false,rows:[],errors:[]})):fetchImpl(url,init),__ModuleLoader__:{load:d=>definition=d}}
+function client(fetchImpl,{cachedFetch,localStorage,browser={}}={}){
+  let definition;const window={...browser,localStorage,fetch:(url,init)=>url.includes('/search-cache?')?(cachedFetch?cachedFetch(url,init):response({cacheHit:false,rows:[],errors:[]})):fetchImpl(url,init),__ModuleLoader__:{load:d=>definition=d}}
   vm.runInNewContext(readFileSync(new URL('../lib/client.js',import.meta.url),'utf8'),{window,AbortController,URL,URLSearchParams,setTimeout,clearTimeout,console})
   assert.equal(definition.id,'dsh-lumen-market')
   return definition.factory(name=>{assert.equal(name,'react');return React})
 }
 const row={id:'npm:demo',name:'demo',source:'npm',description:'A useful plugin <img src=x onerror=alert(1)>',descriptionSource:'package.json',version:'1.0.0',validation:'bundle',compatibility:{verdict:'compatible'},links:{readme:'https://github.com/alice/demo',npm:'https://www.npmjs.com/package/demo'},installable:true}
 const response=data=>Promise.resolve(new Response(JSON.stringify(data)))
+
+test('backup export and restore preview never call plugin installation endpoints',async()=>{
+  const requests=[]
+  const store=client((url,init)=>{requests.push(url);return response(url.endsWith('/backups')?{backups:[]}:url.endsWith('/backup')?{backup:{id:'snapshot',createdAt:'2026-10-28T00:00:00Z',pluginCount:1}}:url.endsWith('/backup-export')?{backup:{schemaVersion:1,plugins:[{name:'demo',version:'1.0.0'}]}}:{diff:{readOnly:true,missing:[],kept:[]}})}).createStore()
+  await store.loadBackups();await store.createBackup();await store.exportBackup('snapshot');await store.previewBackup({backupId:'snapshot'})
+  assert.equal(store.get().backupDiff.readOnly,true)
+  assert.ok(store.get().backupExport.includes('demo'))
+  assert.equal(requests.some(url=>/\/(install|upgrade|uninstall)$/.test(url)),false)
+  await store.importBackup('{bad json')
+  assert.equal(store.get().backupError.code,'invalid-backup')
+  store.dispose()
+})
+
+test('backup panel creates a local snapshot, downloads only the portable list and previews differences',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const requests=[],downloads=[],record={id:'snapshot',createdAt:'2026-10-28T00:00:00Z',pluginCount:1,fileCount:2,directory:'D:/isolated/backups/snapshot'}
+  let exportedBlob,Page,dictionary
+  dom.window.HTMLAnchorElement.prototype.click=function(){downloads.push(this.download)}
+  const module=client((url,init)=>{
+    requests.push(url)
+    return response(url.endsWith('/backups')?{backups:[]}:url.endsWith('/backup')?{backup:record}:url.endsWith('/backup-export')?{backup:{schemaVersion:1,plugins:[{name:'demo',version:'1.0.0'}]}}:url.endsWith('/backup-preview')?{diff:{readOnly:true,missing:[],changedVersions:[],changedState:[],changedSources:[],kept:[{name:'extra'}],configuration:[]}}:{rows:[],errors:[]})
+  },{browser:{document:dom.window.document,Blob,URL:{createObjectURL(blob){exportedBlob=blob;return 'blob:fixture'},revokeObjectURL(){}}}})
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const doc=dom.window.document,click=async text=>act(async()=>[...doc.querySelectorAll('button')].find(b=>b.textContent===text).click())
+  await click('配置备份');await click('创建本机备份');await click('导出插件清单');await click('保存清单 JSON')
+  assert.deepEqual(downloads,['lumen-plugins-backup.json'])
+  assert.ok((await exportedBlob.text()).includes('demo'));assert.equal((await exportedBlob.text()).includes('D:/isolated'),false)
+  await click('恢复预览')
+  assert.ok(doc.body.textContent.includes('只读预览'));assert.ok(doc.body.textContent.includes('extra'))
+  assert.equal(requests.some(url=>/\/(install|upgrade|uninstall)$/.test(url)),false)
+})
+
+test('one-click installation pauses for unknown compatibility until explicit confirmation',async()=>{
+  const posts=[]
+  const store=client((url,init)=>{
+    if(init.method==='POST')posts.push([url,JSON.parse(init.body)])
+    return response(url.endsWith('/inspect')?{previewId:'unknown-plan',preview:{...row,action:'install',requiresCompatibilityConsent:true,compatibility:{verdict:'unknown',reason:'undeclared'}}}:url.endsWith('/install')?{ok:true,application:'applied'}:{rows:[],errors:[]})
+  }).createStore()
+  await store.install(row)
+  assert.equal(posts.length,1);assert.equal(store.get().preview.previewId,'unknown-plan')
+  await store.execute()
+  assert.deepEqual(posts[1],['/api/lumen-market/install',{previewId:'unknown-plan',compatibilityConsent:true}])
+  store.dispose()
+})
 
 test('checking an explicit version pins the reviewed target and performs no write',async()=>{
   const requests=[]

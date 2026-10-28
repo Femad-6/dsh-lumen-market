@@ -10,7 +10,7 @@ import {MarketError} from '../lib/host/core.js'
 test('verified installation metadata survives restart independently from search results',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'lumen-install-cache-'))
   const profile={snapshot:async()=>({profile:{dir},rows:[],runtimeVersion:'0.2.0'})}
-  const target={source:'npm',name:'demo',version:'1.0.0',validation:'bundle',spec:'demo@1.0.0',manifest:{name:'demo',version:'1.0.0',dsh:{bundle:{patch:'x.yml'}}}}
+  const target={source:'npm',name:'demo',version:'1.0.0',validation:'bundle',spec:'demo@1.0.0',manifest:{name:'demo',version:'1.0.0',engines:{dsh:'>=0.2.0 <0.3.0'},dsh:{bundle:{patch:'x.yml'}}}}
   const calls=[],manager={installBundle:async spec=>{calls.push(spec);return {application:'applied'}}}
   let market=new Market({profile,npm:{detail:async()=>target},manager:()=>manager,snapshots:new SearchSnapshots({disk:true}),now:()=>123})
   await market.detail({source:'npm',name:'demo',version:'1.0.0'})

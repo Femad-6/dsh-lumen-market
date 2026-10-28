@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-28T12:37:13.959Z",
+  "officialVersion": "0.2.1-rc.2",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "engine overrides stale peers",
+      "official": "compatible",
+      "market": "compatible"
+    },
+    {
+      "name": "engine rejects unsupported host",
+      "official": "incompatible",
+      "market": "incompatible"
+    },
+    {
+      "name": "workspace peers use host version",
+      "official": "compatible",
+      "market": "compatible"
+    }
+  ],
+  "policy": "Undeclared DSH compatibility is shown as unknown and requires confirmation; Node and author dsh.compatibility.dsh constraints are additional market checks."
+}

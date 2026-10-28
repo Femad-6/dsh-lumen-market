@@ -4,7 +4,7 @@ import { NpmSource } from '../lib/host/npm.js'
 import { GithubSource, repoKey } from '../lib/host/github.js'
 import { HTTP } from '../lib/host/http.js'
 import {MarketError} from '../lib/host/core.js'
-const manifest={name:'dsh-demo',version:'1.0.0',description:'Small useful plugin',main:'lib/index.js',exports:{'.':'./lib/index.js','./client':'./lib/client.js'},dsh:{bundle:{patch:'./cordis.patch.yml'},client:{platform:'web'}}}
+const manifest={name:'dsh-demo',version:'1.0.0',description:'Small useful plugin',engines:{dsh:'>=0.2.0 <0.3.0'},main:'lib/index.js',exports:{'.':'./lib/index.js','./client':'./lib/client.js'},dsh:{bundle:{patch:'./cordis.patch.yml'},client:{platform:'web'}}}
 const json=(x,status=200,headers={})=>new Response(JSON.stringify(x),{status,headers})
 const sha='a'.repeat(40)
 

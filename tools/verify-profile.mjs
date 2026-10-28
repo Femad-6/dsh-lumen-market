@@ -89,9 +89,9 @@ let fixturePacks,savedPatch,registryServer,registryUrl,tarRequests={}
 async function prepareUpgrade(){
   const npmCli=process.env.npm_execpath||join(dirname(process.execPath),'node_modules/npm/bin/npm-cli.js')
   fixturePacks=[]
-  for(const [version,incompatible] of [['1.0.0',false],['2.0.0',false],['3.0.0',true]]){
+  for(const [version,incompatible] of [['1.0.0',false],['2.0.0',false],['3.0.0',true],['4.0.0',false]]){
     const dir=join(root,'fixtures',version);await mkdir(dir,{recursive:true})
-    const manifest={name:fixtureName,version,type:'module',main:'index.js',license:'MIT',dsh:{bundle:{patch:'./cordis.patch.yml'}},...(incompatible?{peerDependencies:{'@deepseek-ai/dsh-base':'99.0.0'}}:{})}
+    const manifest={name:fixtureName,version,type:'module',main:'index.js',license:'MIT',...(version==='4.0.0'||incompatible?{}:{engines:{dsh:'>=0.2.0 <0.3.0'}}),dsh:{bundle:{patch:'./cordis.patch.yml'}},...(incompatible?{peerDependencies:{'@deepseek-ai/dsh-base':'99.0.0'}}:{})}
     await writeFile(join(dir,'package.json'),JSON.stringify(manifest,null,2))
     await writeFile(join(dir,'index.js'),"export const name='lumenUpgradeFixture'; export function apply() {}\n")
     await writeFile(join(dir,'cordis.patch.yml'),'- insert:\n    - id: lumen-upgrade-fixture\n      name: '+fixtureName+'\n')
@@ -105,8 +105,8 @@ async function prepareUpgrade(){
 }
 async function startRegistry(){
   const packages={}
-  for(const version of ['1.0.0','2.0.0','3.0.0']){
-    const bytes=await readFile(fixturePacks[['1.0.0','2.0.0','3.0.0'].indexOf(version)])
+  for(const version of ['1.0.0','2.0.0','3.0.0','4.0.0']){
+    const bytes=await readFile(fixturePacks[['1.0.0','2.0.0','3.0.0','4.0.0'].indexOf(version)])
     const meta=JSON.parse(await readFile(join(root,'fixtures',version,'package.json'),'utf8'))
     // Simulate metadata that passes preflight but whose installed 3.0.0 payload is incompatible.
     delete meta.peerDependencies
@@ -132,11 +132,26 @@ async function reinstallRunning(session){
   }
   const before=JSON.parse(await readFile(join(profileDir,'package.json'),'utf8'))
   const config=await readFile(join(profileDir,'cordis.patch.yml'),'utf8')
+  const created=await call('/backup',{})
+  assert.equal(created.status,200);const backupId=created.data.backup.id
+  const exported=await call('/backup-export',{backupId})
+  assert.equal(exported.status,200)
+  const portable=JSON.stringify(exported.data.backup)
+  assert.equal(portable.includes(root),false);assert.equal(portable.includes('preserve-me'),false);assert.equal(portable.includes('apiKey'),false)
+  const initialDiff=await call('/backup-preview',{backupId})
+  assert.equal(initialDiff.status,200);assert.equal(initialDiff.data.diff.readOnly,true)
+  evidence.profileBackupAndPortableExport='passed'
+  const unknown=await call('/inspect',{action:'upgrade',source:'npm',name:fixtureName,version:'4.0.0'})
+  assert.equal(unknown.status,200);assert.equal(unknown.data.preview.compatibility.verdict,'unknown');assert.equal(unknown.data.preview.requiresCompatibilityConsent,true)
+  const blockedUnknown=await call('/upgrade',{previewId:unknown.data.previewId,reinstallConsent:true})
+  assert.equal(blockedUnknown.status,409);assert.equal(blockedUnknown.data.code,'compatibility-consent-required')
+  evidence.unknownCompatibilityConsent='passed'
+
   let plan=await call('/inspect',{action:'upgrade',source:'npm',name:fixtureName,version:'2.0.0'})
   assert.equal(plan.status,200);assert.equal(plan.data.preview.upgradeMode,'reinstall')
   const noConsent=await call('/upgrade',{previewId:plan.data.previewId})
   assert.equal(noConsent.status,409);assert.equal(noConsent.data.code,'reinstall-consent-required')
-  let result=await call('/upgrade',{previewId:plan.data.previewId,reinstallConsent:true})
+  let result=await call('/upgrade',{previewId:plan.data.previewId,reinstallConsent:true,...(plan.data.preview.requiresCompatibilityConsent?{compatibilityConsent:true}:{})})
   assert.equal(result.status,200);assert.equal(result.data.ok,true,JSON.stringify(result.data));assert.equal(result.data.upgradeMode,'reinstall')
   assert.equal(JSON.parse(await readFile(join(profileDir,'node_modules',fixtureName,'package.json'),'utf8')).version,'2.0.0')
   assert.equal(await readFile(join(profileDir,'cordis.patch.yml'),'utf8'),config)
@@ -145,7 +160,7 @@ async function reinstallRunning(session){
   evidence.confirmedRunningReinstall='passed';evidence.settingsAndOrderPreserved=true
   plan=await call('/inspect',{action:'upgrade',source:'npm',name:fixtureName,version:'3.0.0'})
   assert.equal(plan.status,200)
-  result=await call('/upgrade',{previewId:plan.data.previewId,reinstallConsent:true})
+  result=await call('/upgrade',{previewId:plan.data.previewId,reinstallConsent:true,...(plan.data.preview.requiresCompatibilityConsent?{compatibilityConsent:true}:{})})
   assert.equal(result.status,200);assert.equal(result.data.ok,false);assert.equal(result.data.recovery.status,'restored',JSON.stringify(result.data));assert.equal(result.data.recovery.localArchive,true)
   assert.equal(JSON.parse(await readFile(join(profileDir,'node_modules',fixtureName,'package.json'),'utf8')).version,'2.0.0')
   assert.equal(await readFile(join(profileDir,'cordis.patch.yml'),'utf8'),config)
@@ -153,6 +168,9 @@ async function reinstallRunning(session){
   const updates=await call('/updates')
   const recovered=updates.data.rows.find(row=>row.name===fixtureName)
   assert.equal(recovered.installed,'2.0.0');assert.equal(recovered.npmOrigin.name,fixtureName);assert.equal(recovered.latest,'2.0.0')
+  const backupDiff=await call('/backup-preview',{backupId})
+  assert.equal(backupDiff.status,200);assert.ok(backupDiff.data.diff.changedVersions.some(row=>row.name===fixtureName));assert.equal(backupDiff.data.diff.readOnly,true)
+  evidence.readOnlyRestoreDiff='passed'
   evidence.verifiedArchiveOrigin='passed'
   evidence.runningReinstallRecovery='passed';evidence.localRecoverySource='verified local archive'
 }

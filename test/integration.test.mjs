@@ -12,7 +12,7 @@ import {createRoute} from '../lib/host/route.js'
 
 async function fixture(t,mode){
   const dir=mkdtempSync(join(tmpdir(),'lumen-integration-')),manifestPath=join(dir,'package.json'),diskPath=join(dir,'node_modules','demo','package.json'),lockPath=join(dir,'pnpm-lock.yaml')
-  const selected=['demo','untouched'],before={dsh:{profile:{bundles:selected}},dependencies:{demo:'1.0.0'}},pkg={name:'demo',version:'1.0.0',dsh:{bundle:{patch:'demo.yml'}}}
+  const selected=['demo','untouched'],before={dsh:{profile:{bundles:selected}},dependencies:{demo:'1.0.0'}},pkg={name:'demo',version:'1.0.0',engines:{dsh:'>=0.2.0 <0.3.0'},dsh:{bundle:{patch:'demo.yml'}}}
   mkdirSync(join(dir,'node_modules','demo'),{recursive:true})
   writeFileSync(manifestPath,JSON.stringify(before));writeFileSync(diskPath,JSON.stringify(pkg));writeFileSync(lockPath,'fixture-lock-v1\n')
   let market,finish,cancelled=false,observedEnabled
