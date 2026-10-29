@@ -29,6 +29,34 @@ test('combined search retains npm result when GitHub fails',async()=>{
   assert.equal(r.rows[0].name,'demo');assert.equal(r.errors[0].source,'github');assert.equal(r.errors[0].retryAt,1234)
 })
 
+test('exact repository discovery never queries unrelated npm registries',async()=>{
+  const {market}=setup()
+  market.npm.search=async()=>{throw new Error('npm must not be queried')}
+  market.github.search=async()=>({rows:[{name:'alice/demo',repo:'alice/demo',source:'github'}],total:1})
+  const result=await market.search({q:'https://github.com/alice/demo'})
+  assert.deepEqual(result.errors,[])
+  assert.equal(result.rows[0].repo,'alice/demo')
+  assert.equal(result.sources.npm,undefined)
+})
+
+test('script approval retries only server-recorded pending builds after explicit consent',async()=>{
+  const {market}=setup();const calls=[]
+  market.manager().installBundle=async(spec,options)=>{
+    calls.push({spec,options})
+    return options.approvedBuilds?{application:'applied',changed:true}:{application:'failed',packageResult:{kind:'build-blocked'},pendingBuilds:['demo@https://codeload.github.com/alice/demo/tar.gz/'+'a'.repeat(40)]}
+  }
+  const plan=await market.inspect({source:'github',repo:'alice/demo'})
+  const blocked=await market.execute('install',{previewId:plan.previewId})
+  assert.ok(blocked.approvalPreviewId)
+  await assert.rejects(market.execute('install',{previewId:blocked.approvalPreviewId}),e=>e.code==='build-consent-required')
+  await assert.rejects(market.execute('install',{previewId:blocked.approvalPreviewId,buildConsent:true,approvedBuilds:['*']}),e=>e.code==='invalid-request')
+  const done=await market.execute('install',{previewId:blocked.approvalPreviewId,buildConsent:true})
+  assert.equal(done.ok,true)
+  assert.deepEqual(calls[1].options.approvedBuilds,blocked.pendingBuilds)
+  assert.equal(calls[1].spec,calls[0].spec)
+  await assert.rejects(market.execute('install',{previewId:blocked.approvalPreviewId,buildConsent:true}),e=>e.code==='preview-expired')
+})
+
 test('weekly ranking preserves its 50-candidate order, coverage and cached results across market pages',async()=>{
   const {market}=setup();let failed=false
   const rows=Array.from({length:50},(_,i)=>({id:`github:alice/p${i}`,name:`alice/p${i}`,repo:`alice/p${i}`,source:'github',weeklyStars:50-i}))
@@ -478,7 +506,22 @@ test('cancelling remote revalidation prevents the official installation from sta
   await market.cancel({operationId:operation.operationId})
   release();const result=await active
   assert.equal(result.application,'cancelled');assert.equal(result.ok,false)
+  assert.equal(result.installation.done,true);assert.equal(result.installation.phase,'cancelled')
   assert.deepEqual(calls,[]);assert.equal(market.busy,false)
+})
+
+test('installation errors carry a final diagnostic snapshot rather than the last in-flight poll',async()=>{
+  const {market,setNow}=setup();const plan=await market.inspect({source:'npm',name:'demo'})
+  market.manager().installBundle=async(spec,options)=>{
+    market.installLog({requestId:options.requestId,text:'last output without newline'})
+    setNow(2500);throw new MarketError('network',502)
+  }
+  await assert.rejects(market.execute('install',{previewId:plan.previewId}),error=>{
+    assert.equal(error.extra.installation.done,true)
+    assert.equal(error.extra.installation.elapsedMs,2500)
+    assert.ok(error.extra.installation.logs.includes('last output without newline'))
+    return error.code==='network'
+  })
 })
 
 test('official progress is bound to the active request and cancellation awaits its result',async()=>{
@@ -498,6 +541,75 @@ test('official progress is bound to the active request and cancellation awaits i
   await assert.rejects(market.cancel({operationId:'unrelated'}),/operation-not-found/)
   assert.equal((await market.cancel({operationId:op.operationId})).status,'cancelled')
   assert.equal((await active).application,'cancelled')
+})
+
+test('live installation logs are isolated, bounded and redact credentials split across chunks',async()=>{
+  const {market,setNow}=setup();const plan=await market.inspect({source:'npm',name:'demo'})
+  let finish,requestId
+  market.manager().installBundle=async(spec,options)=>{requestId=options.requestId;return new Promise(r=>finish=r)}
+  const active=market.execute('install',{previewId:plan.previewId})
+  while(!finish)await new Promise(r=>setImmediate(r))
+  assert.equal(typeof market.installLog,'function')
+  market.installLog({requestId:'other',text:'must not appear\n'})
+  setNow(1200)
+  market.installLog({requestId,jobId:'job',stream:'stdout',text:'Progress: resolved 3, downloaded 1\nAuthorization: Bearer sec'})
+  let status=market.operation({previewId:plan.previewId}).operation
+  assert.ok(status.logs.includes('downloaded 1'));assert.equal(status.logs.includes('sec'),false)
+  market.installLog({requestId,jobId:'job',stream:'stdout',text:'ret-value\n'})
+  market.installLog({requestId,jobId:'job',stream:'stdout',text:'{"token":"example-'})
+  market.installLog({requestId,jobId:'job',stream:'stdout',text:'credential", "password": "password with spaces"}\n'})
+  status=market.operation({previewId:plan.previewId}).operation
+  assert.ok(status.logs.includes('[redacted]'));assert.equal(status.logs.includes('secret-value'),false)
+  assert.equal(status.logs.includes('example-credential'),false);assert.equal(status.logs.includes('password with spaces'),false)
+  for(let i=0;i<150;i++)market.installLog({requestId,jobId:'job',stream:'stdout',text:'line '+i+'\n'})
+  setNow(65000)
+  status=market.operation({previewId:plan.previewId}).operation
+  assert.equal(status.elapsedMs,65000);assert.equal(status.lastActivityAt,1200)
+  assert.equal(status.quietMs,63800);assert.equal(status.quiet,true)
+  assert.equal(status.logs.includes('secret-value'),false);assert.equal(status.logs.includes('must not appear'),false)
+  assert.ok(status.logs.length<=32768);assert.ok(status.logs.includes('line 149'))
+  finish({application:'applied',changed:true});const result=await active
+  assert.equal(result.installation.done,true);assert.equal(result.installation.elapsedMs,65000)
+  setNow(90000)
+  assert.equal(market.operation({previewId:plan.previewId}).operation.elapsedMs,65000)
+  market.installLog({requestId,text:'late event\n'})
+  assert.equal(market.operation({previewId:plan.previewId}).operation.logs.includes('late event'),false)
+})
+
+test('unterminated and oversized log chunks cannot disclose credentials and final partial lines are retained',async()=>{
+  const {market}=setup();const plan=await market.inspect({source:'npm',name:'demo'})
+  let finish,requestId
+  market.manager().installBundle=async(spec,options)=>{requestId=options.requestId;return new Promise(r=>finish=r)}
+  const active=market.execute('install',{previewId:plan.previewId})
+  while(!finish)await new Promise(r=>setImmediate(r))
+  market.installLog({requestId,text:'token='+('secret'.repeat(20000))})
+  market.installLog({requestId,text:'end-of-secret\nDownloading dependency'})
+  assert.equal(market.operation({previewId:plan.previewId}).operation.logs.includes('secret'),false)
+  market.installLog({requestId,exitCode:1,text:''})
+  finish({application:'failed',packageResult:{kind:'timeout'}})
+  const result=await active
+  assert.ok(result.installation.logs.includes('Downloading dependency'))
+  assert.equal(result.installation.logs.includes('secret'),false)
+  assert.equal(result.installation.logsTruncated,true)
+})
+
+test('registry fallback updates the active address and default registry resolution cannot overwrite a newer attempt',async()=>{
+  const {market,setNow}=setup();const plan=await market.inspect({source:'npm',name:'demo'})
+  let finish,requestId,resolveRegistry
+  market.manager().registries=()=>new Promise(r=>resolveRegistry=r)
+  market.manager().installBundle=async(spec,options)=>{requestId=options.requestId;return new Promise(r=>finish=r)}
+  const active=market.execute('install',{previewId:plan.previewId})
+  while(!finish)await new Promise(r=>setImmediate(r))
+  market.progress({requestId,phase:'installing',attempt:{registry:null,index:1,total:2}})
+  await new Promise(r=>setImmediate(r));assert.equal(typeof resolveRegistry,'function')
+  setNow(2000)
+  market.progress({requestId,phase:'installing',attempt:{registry:'https://registry.npmmirror.com/',index:2,total:2}})
+  resolveRegistry({resolved:'https://registry.npmjs.org/'})
+  await new Promise(r=>setImmediate(r))
+  assert.equal(market.operation({previewId:plan.previewId}).operation.attempt.registry,'https://registry.npmmirror.com/')
+  finish({application:'failed',packageResult:{kind:'network'}})
+  const result=await active
+  assert.equal(result.installation.attempt.index,2);assert.equal(result.installation.quiet,false)
 })
 
 test('too-late cancellation never changes a successful application into cancelled',async()=>{

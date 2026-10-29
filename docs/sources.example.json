@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "repo": "YuJunZhiXue/dsh-purge",
+      "sha": "0c933dc7d3252698f3f0f9756932dcc88355f532",
+      "name": "dsh-purge",
+      "version": "1.1.82",
+      "downloads": [
+        {
+          "url": "https://codeload.github.com/YuJunZhiXue/dsh-purge/tar.gz/0c933dc7d3252698f3f0f9756932dcc88355f532",
+          "integrity": "sha512-67PqL5UagHgpPDWEnaYe6tGWgBeuuqOkK4dBHopp5E3pBx09EhVke8zKnluT3harT1cWUhSWC/yTHuoi94Ircw=="
+        }
+      ]
+    }
+  ]
+}

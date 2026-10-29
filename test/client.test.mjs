@@ -15,6 +15,78 @@ function client(fetchImpl,{cachedFetch,localStorage,browser={}}={}){
 const row={id:'npm:demo',name:'demo',source:'npm',description:'A useful plugin <img src=x onerror=alert(1)>',descriptionSource:'package.json',version:'1.0.0',validation:'bundle',compatibility:{verdict:'compatible'},links:{readme:'https://github.com/alice/demo',npm:'https://www.npmjs.com/package/demo'},installable:true}
 const response=data=>Promise.resolve(new Response(JSON.stringify(data)))
 
+test('slow installation exposes live logs, registry and elapsed time and retains diagnostics after failure',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  let Page,dictionary,finish
+  const operation={operationId:'slow',phase:'installing',startedAt:Date.now()-68000,lastActivityAt:Date.now()-65000,elapsedMs:68000,quietMs:65000,quiet:true,cancellable:true,done:false,attempt:{index:2,total:2,registry:'https://registry.npmmirror.com/'},logs:'WARN request timed out\n<script>unsafe()</script>\n'}
+  const module=client(url=>{
+    if(url.endsWith('/inspect'))return response({previewId:'slow-preview',preview:{...row,action:'install'}})
+    if(url.endsWith('/install'))return new Promise(resolve=>finish=resolve)
+    if(url.includes('/operation'))return response({operation})
+    return response({rows:[row],errors:[]})
+  })
+  const cleanups=[]
+  module.apply({effect(fn){const cleanup=fn();if(typeof cleanup==='function')cleanups.push(cleanup)},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{finish?.(new Response('{"application":"cancelled"}'));await act(async()=>root.unmount());cleanups.forEach(fn=>fn());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  await act(async()=>[...dom.window.document.querySelectorAll('button')].find(b=>b.textContent==='一键安装').click())
+  const doc=dom.window.document
+  assert.ok(doc.body.textContent.includes('WARN request timed out'))
+  assert.ok(doc.body.textContent.includes('已耗时'))
+  assert.ok(doc.body.textContent.includes('超过 60 秒没有新活动'))
+  assert.ok(doc.body.textContent.includes('https://registry.npmmirror.com/'))
+  assert.equal(doc.querySelector('script'),null)
+  await act(async()=>{finish(new Response(JSON.stringify({ok:false,application:'failed',installation:{...operation,done:true,phase:'failed'},packageResult:{kind:'network',output:'network failure'}})));await new Promise(r=>setImmediate(r))})
+  assert.ok(doc.body.textContent.includes('WARN request timed out'))
+  assert.ok(doc.body.textContent.includes('安装过程记录'))
+})
+
+test('source management imports and updates catalogs without installing a plugin',async()=>{
+  const requests=[],catalog={schemaVersion:1,entries:[{repo:'alice/demo'}]}
+  const store=client((url,init)=>{requests.push([url,init.body&&JSON.parse(init.body)]);return response({ok:true,catalog})}).createStore()
+  await store.loadSources()
+  await store.importSources(JSON.stringify(catalog))
+  await store.updateSources('https://example.com/plugins.json')
+  assert.equal(store.get().sources.entries[0].repo,'alice/demo')
+  assert.deepEqual(requests.map(r=>r[0]),['/api/lumen-market/sources','/api/lumen-market/sources','/api/lumen-market/sources'])
+  assert.equal(requests[1][1].action,'import');assert.equal(requests[2][1].action,'update')
+  store.dispose()
+})
+
+test('source panel exposes import, update and pinned repository entries',async t=>{
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  let Page,dictionary
+  const module=client(url=>response(url.endsWith('/sources')?{catalog:{schemaVersion:1,entries:[{repo:'alice/demo',sha:'a'.repeat(40),name:'demo',version:'1.0.0',downloads:[]}]}}:{rows:[],errors:[]}))
+  module.apply({effect(fn){fn()},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){if(info.name==='main')Page=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  await act(async()=>root.render(React.createElement(Page)))
+  const button=[...dom.window.document.querySelectorAll('button')].find(b=>b.textContent==='安装源');assert.ok(button)
+  await act(async()=>button.click())
+  assert.ok(dom.window.document.querySelector('textarea[aria-label="粘贴源目录 JSON"]'))
+  assert.ok(dom.window.document.body.textContent.includes('alice/demo'))
+  assert.ok(dom.window.document.body.textContent.includes('添加 / 更新源地址'))
+})
+
+test('build approval is sent only after the user selects retry for the blocked installation',async()=>{
+  const posts=[]
+  const store=client((url,init)=>{
+    if(init.method==='POST')posts.push(JSON.parse(init.body))
+    return response(url.endsWith('/inspect')?{previewId:'plan',preview:{...row,action:'install'}}:url.endsWith('/install')?{ok:false,application:'failed',packageResult:{kind:'build-blocked'},approvalPreviewId:'approval',pendingBuilds:['demo']}:{rows:[],errors:[]})
+  }).createStore()
+  await store.install(row)
+  assert.equal(posts[1].buildConsent,undefined)
+  assert.equal(store.get().result.approvalPreviewId,'approval')
+  await store.approveBuilds()
+  assert.deepEqual(posts[2],{previewId:'approval',buildConsent:true})
+  store.dispose()
+})
+
 test('backup export and restore preview never call plugin installation endpoints',async()=>{
   const requests=[]
   const store=client((url,init)=>{requests.push(url);return response(url.endsWith('/backups')?{backups:[]}:url.endsWith('/backup')?{backup:{id:'snapshot',createdAt:'2026-10-28T00:00:00Z',pluginCount:1}}:url.endsWith('/backup-export')?{backup:{schemaVersion:1,plugins:[{name:'demo',version:'1.0.0'}]}}:{diff:{readOnly:true,missing:[],kept:[]}})}).createStore()

@@ -1,5 +1,11 @@
 # DSH STORE 审核说明
 
+## 0.7.0 候选版新增能力
+
+安装源由用户主动导入 JSON 或添加 HTTPS 地址，源地址保存在当前 Profile，手动更新，不后台轮询。网络可访问用户指定的公开 HTTPS 源域名和包域名；源查询不发送 GitHub Token。拒绝 URL 凭据、查询参数、IP / 本机域名和跳转。源目录与归档分别保存在 `.lumen-market/sources.json`、`.lumen-market/archives/`；详情中的缓存按钮会下载、校验并保存固定 commit 的包，不执行脚本。安装前校验 SHA-512、身份和构建文件，仍通过官方管理器安装。
+
+脚本授权重试只提交该次官方失败返回的 pendingBuilds，需用户点击明确许可按钮；不接受客户端自选的脚本名单。完整格式、网络/空间上限和已知边界见 [INSTALLATION-SOURCES.md](INSTALLATION-SOURCES.md)。
+
 本文件回应 Catalog blocked 通知，供固定 Commit 的人工审查使用。项目建议采用 `user-reviewed` 更新策略；作者声明不代表商城批准或独立安全审计通过。源码中的文件、网络和凭据信号是实际能力，不通过重命名、混淆或删除说明来规避检查。
 
 ## 安装契约与兼容范围

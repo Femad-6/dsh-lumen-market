@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events'
 import { createRoute } from '../lib/host/route.js'
 import { apply } from '../lib/index.js'
 const market={health:()=>({ok:true}),search:async q=>({ok:true,q}),installed:async()=>({ok:true,rows:[]}),updates:async()=>({ok:true,rows:[]}),detail:async()=>({name:'demo'}),inspect:async()=>({previewId:'id'}),execute:async()=>({ok:false,application:'failed'}),operation:args=>({ok:true,args,operation:null}),cancel:async body=>({ok:true,status:'cancelled',operationId:body.operationId})}
+market.sources=async body=>({ok:true,body:body??null,catalog:{schemaVersion:1,entries:[]}})
 Object.assign(market,{listBackups:async()=>({ok:true,backups:[]}),createBackup:async()=>({ok:true,backup:{id:'created'}}),exportBackup:async id=>({ok:true,backup:{id}}),previewBackup:async options=>({ok:true,diff:{readOnly:true,options}})})
 function invoke({path='/health',method='GET',headers={'x-dsh-lumen-market':'1'},remote='127.0.0.1',body}={}){
   const req=new EventEmitter();req.url='/api/lumen-market'+path;req.method=method;req.headers=headers;req.socket={remoteAddress:remote}
@@ -17,6 +18,14 @@ test('all requests require header and writes require loopback',async()=>{
   assert.equal((await invoke({headers:{}})).statusCode,403)
   assert.equal((await invoke({path:'/install',method:'POST',remote:'192.0.2.2',body:'{}'})).statusCode,403)
   assert.equal((await invoke({method:'OPTIONS'})).statusCode,405)
+})
+
+test('source catalog reads and updates are local, same-origin and preserve JSON payloads',async()=>{
+  assert.equal((await invoke({path:'/sources'})).body.catalog.schemaVersion,1)
+  assert.equal((await invoke({path:'/sources',remote:'192.0.2.2'})).statusCode,403)
+  assert.equal((await invoke({path:'/sources',method:'POST',headers:{'x-dsh-lumen-market':'1',host:'localhost',origin:'https://evil.invalid'},body:'{}'})).statusCode,403)
+  const body={action:'import',catalog:{schemaVersion:1,entries:[]}}
+  assert.deepEqual((await invoke({path:'/sources',method:'POST',body:JSON.stringify(body)})).body.body,body)
 })
 
 test('backup routes are loopback-only, same-origin and reject extra write arguments',async()=>{

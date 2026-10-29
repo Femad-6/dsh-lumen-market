@@ -8,6 +8,17 @@ const manifest={name:'dsh-demo',version:'1.0.0',description:'Small useful plugin
 const json=(x,status=200,headers={})=>new Response(JSON.stringify(x),{status,headers})
 const sha='a'.repeat(40)
 
+test('execution reuses validated immutable commit metadata instead of repeating every API request',async()=>{
+  const {source,urls}=githubFixture()
+  const row=await source.detail('alice/demo',{fresh:true}),count=urls.length
+  const pinned=await source.detail('alice/demo',{sha:row.sha,fresh:true})
+  assert.equal(pinned.spec,'github:alice/demo#'+'a'.repeat(40))
+  assert.equal(urls.length,count)
+  source.clear()
+  await source.detail('alice/demo',{sha:row.sha,fresh:true})
+  assert.ok(urls.length>count)
+})
+
 test('empty star search requests the most-starred topic plugins without a keyword',async()=>{
   let requested
   const source=new GithubSource({http:{json:async url=>{requested=new URL(url);return {items:[{full_name:'alice/top',stargazers_count:9000}],total_count:1}}}})

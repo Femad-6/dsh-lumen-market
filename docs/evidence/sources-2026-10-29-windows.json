@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-29T13:03:08.354Z",
+  "platform": "win32",
+  "node": "v24.21.0",
+  "packageSha256": "5eb63fb8c442355bad71d4f823629931f0c1812392a67056d7c18113c241bef2",
+  "install": "passed",
+  "start": "passed",
+  "uninstall": "passed",
+  "rollback": "unknown",
+  "desktopUi": "not-tested",
+  "dshVersion": "0.2.1-rc.2",
+  "bootHost": "127.0.0.1",
+  "bootStage": "installed",
+  "sourceCatalogReadImportPersistence": "passed",
+  "sourceScriptApprovalRetry": "passed",
+  "cachedSourceOfficialInstallAndOrigin": "passed",
+  "sourceFixtureRemoval": "passed",
+  "runtimeFilesSha256": "d9ff6ce0d951b8a09750e2ff1ea623d0d819316d792b9c2ed6bcd29d60a62f70",
+  "authenticatedHealthHttp": 200,
+  "installedInventoryHttp": 200,
+  "compositionRestored": true,
+  "rollbackScope": "failure rollback not tested",
+  "status": "passed",
+  "scope": "Official DSH 0.2.1-rc.2 on Windows, disposable Web Profile; user Profile and third-party scripts untouched. Own inert fixture verifies cached source installation, build approval retry, GitHub origin, removal and baseline restoration. Browser checks use offline mock UI; not desktop host UI.",
+  "fullTests": {
+    "total": 204,
+    "passed": 203,
+    "skipped": 1,
+    "failed": 0
+  }
+}

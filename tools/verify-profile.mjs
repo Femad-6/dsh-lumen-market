@@ -62,11 +62,14 @@ async function boot(){
     await pause(500)
   }
   assert.ok(launch,'Host must report its authenticated launch URL: '+output.slice(-3000).replace(/https?:\/\/[^\s]+/g,'[URL redacted]'))
-  const login=await fetch(launch,{redirect:'manual',signal:AbortSignal.timeout(10000)})
+  const localLaunch=new URL(launch);evidence.bootHost=localLaunch.hostname;localLaunch.hostname='127.0.0.1'
+  evidence.bootStage='login'
+  const login=await fetch(localLaunch,{redirect:'manual',signal:AbortSignal.timeout(30000)})
   assert.ok([302,303].includes(login.status))
   const cookie=login.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ')
   assert.ok(cookie)
-  const base=new URL(launch).origin
+  const base=localLaunch.origin
+  evidence.bootStage='health'
   let response
   for(let i=0;i<30;i++){
     response=await fetch(`${base}/api/lumen-market/health`,{headers:{cookie,'x-dsh-lumen-market':'1'},signal:AbortSignal.timeout(10000)})
@@ -77,6 +80,7 @@ async function boot(){
   const health=await response.json()
   assert.equal(health.ok,true);assert.equal(health.managementAvailable,true)
   assert.equal(resolve(health.profile.dir),resolve(env.DSH_HOME,'profiles','web'))
+  evidence.bootStage='installed'
   const installedResponse=await fetch(`${base}/api/lumen-market/installed`,{headers:{cookie,'x-dsh-lumen-market':'1'},signal:AbortSignal.timeout(10000)})
   assert.equal(installedResponse.status,200)
   const inventory=await installedResponse.json()
@@ -216,6 +220,52 @@ try{
   stage='start'
   const session=await boot()
   const {base,cookie,health}=session
+  stage='sources-api'
+  const sourceHeaders={cookie,'x-dsh-lumen-market':'1','content-type':'application/json'}
+  const catalogResponse=await fetch(base+'/api/lumen-market/sources',{headers:sourceHeaders})
+  assert.equal(catalogResponse.status,200);assert.equal((await catalogResponse.json()).catalog.schemaVersion,1)
+  const sourceDir=join(root,'fixtures','source'),sourceName='dsh-acceptance-fixture'
+  await mkdir(sourceDir,{recursive:true})
+  await writeFile(join(sourceDir,'package.json'),JSON.stringify({name:sourceName,version:'1.0.0',type:'module',main:'index.js',engines:{dsh:'>=0.2.0 <0.3.0'},dsh:{bundle:{patch:'cordis.patch.yml'}},scripts:{postinstall:'node -e "console.log(\'lumen-source-approval-fixture\')"'}}))
+  await writeFile(join(sourceDir,'index.js'),"export const name='sourceAcceptance'; export function apply() {}\n")
+  await writeFile(join(sourceDir,'cordis.patch.yml'),'- insert:\n    - id: lumen-source-acceptance\n      name: '+sourceName+'\n')
+  const npmCli=process.env.npm_execpath||join(dirname(process.execPath),'node_modules/npm/bin/npm-cli.js')
+  await run(['pack','--ignore-scripts','--json'],{entry:npmCli,cwd:sourceDir})
+  const sourceBytes=await readFile(join(sourceDir,sourceName+'-1.0.0.tgz')),sourceHash=createHash('sha512').update(sourceBytes).digest('hex')
+  const archiveDir=join(health.profile.dir,'.lumen-market','archives');await mkdir(archiveDir,{recursive:true});await writeFile(join(archiveDir,sourceHash+'.tgz'),sourceBytes)
+  const imported=await fetch(base+'/api/lumen-market/sources',{method:'POST',headers:sourceHeaders,body:JSON.stringify({action:'import',catalog:{schemaVersion:1,entries:[{repo:'acceptance/fixture',sha:'a'.repeat(40),name:sourceName,version:'1.0.0',downloads:[{url:'https://source-fixture.invalid/package.tgz',integrity:'sha512-'+Buffer.from(sourceHash,'hex').toString('base64')}]}]}})})
+  assert.equal(imported.status,200);assert.equal((await imported.json()).catalog.entries[0].repo,'acceptance/fixture')
+  const stored=JSON.parse(await readFile(join(health.profile.dir,'.lumen-market','sources.json'),'utf8'))
+  assert.equal(stored.entries[0].sha,'a'.repeat(40));evidence.sourceCatalogReadImportPersistence='passed'
+  const sourceCall=async(path,body)=>{
+    const res=await fetch(base+'/api/lumen-market'+path,{headers:sourceHeaders,method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(180000)})
+    return {status:res.status,data:await res.json()}
+  }
+  stage='source-install-and-script-approval'
+  const sourcePlan=await sourceCall('/inspect',{source:'github',repo:'acceptance/fixture'})
+  assert.equal(sourcePlan.status,200);assert.equal(sourcePlan.data.preview.catalog,true)
+  let sourceInstall=await sourceCall('/install',{previewId:sourcePlan.data.previewId})
+  assert.equal(sourceInstall.status,200)
+  if(sourceInstall.data.packageResult?.kind==='build-blocked'){
+    assert.ok(sourceInstall.data.installation.logs.length>0)
+    assert.ok(sourceInstall.data.approvalPreviewId);assert.ok(sourceInstall.data.pendingBuilds.length)
+    const noConsent=await sourceCall('/install',{previewId:sourceInstall.data.approvalPreviewId})
+    assert.equal(noConsent.data.code,'build-consent-required')
+    sourceInstall=await sourceCall('/install',{previewId:sourceInstall.data.approvalPreviewId,buildConsent:true})
+    evidence.sourceScriptApprovalRetry='passed'
+  }else evidence.sourceScriptApprovalRetry='not-blocked-by-host'
+  assert.equal(sourceInstall.data.ok,true,JSON.stringify(sourceInstall.data))
+  assert.equal(sourceInstall.data.installation.done,true)
+  assert.ok(sourceInstall.data.installation.elapsedMs>=0)
+  assert.ok(sourceInstall.data.installation.logs.includes('lumen-source-approval-fixture'))
+  evidence.liveOfficialInstallLogAndTiming='passed'
+  const sourceInventory=await sourceCall('/installed')
+  assert.equal(sourceInventory.data.rows.find(row=>row.name===sourceName)?.gitOrigin?.repo,'acceptance/fixture')
+  const removePlan=await sourceCall('/inspect',{action:'uninstall',source:'installed',name:sourceName})
+  assert.equal(removePlan.status,200)
+  const sourceRemove=await sourceCall('/uninstall',{previewId:removePlan.data.previewId})
+  assert.equal(sourceRemove.data.ok,true)
+  evidence.cachedSourceOfficialInstallAndOrigin='passed';evidence.sourceFixtureRemoval='passed'
   evidence.runtimeFilesSha256=await runtimeHash(join(health.profile.dir,'node_modules','dsh-lumen-market'))
   evidence.start='passed';evidence.authenticatedHealthHttp=200;evidence.installedInventoryHttp=200
   if(testReinstall)await reinstallRunning(session)
