@@ -2,13 +2,13 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises'
 import {join} from 'node:path'
+import {tmpdir} from 'node:os'
 import {gzipSync} from 'node:zlib'
 import {createHash} from 'node:crypto'
 import {SourceCatalog,catalogOrigin} from '../lib/host/catalog.js'
 import {Market} from '../lib/host/market.js'
 
 const sha='a'.repeat(40),manifest={name:'dsh-demo',version:'1.0.0',main:'lib/index.js',dsh:{bundle:{patch:'cordis.patch.yml'}}}
-const tmpdir=()=>join(process.cwd(),'verification')
 function archive(pkg=manifest,code='export const name="demo"'){
   const chunks=[]
   for(const [path,value] of Object.entries({'package.json':JSON.stringify(pkg),'lib/index.js':code,'cordis.patch.yml':'plugins: {}'})){
