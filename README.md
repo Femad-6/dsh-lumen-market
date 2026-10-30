@@ -4,11 +4,9 @@
 
 [npm](https://www.npmjs.com/package/dsh-lumen-market) · [问题反馈](https://github.com/Femad-6/dsh-lumen-market/issues)
 
-当前版本：**[0.6.0](https://github.com/Femad-6/dsh-lumen-market/tree/v0.6.0)**。
+当前版本：**[0.7.1](https://www.npmjs.com/package/dsh-lumen-market/v/0.7.1)**。
 
-工作区中的 **0.7.1 为本地候选版，尚未发布**：增加可维护的安装源、脚本授权重试及实时安装日志，见[安装源说明](docs/INSTALLATION-SOURCES.md)。
-
-本版包含配置备份、兼容性确认、可恢复的一键升级和全新图标，详见[更新记录](CHANGELOG.md#060--2026-10-28)。
+本版增加可维护的安装源、脚本授权重试及实时安装日志，见[安装源说明](docs/INSTALLATION-SOURCES.md)和[更新记录](CHANGELOG.md#071--2026-10-30)。
 
 ## 功能
 
@@ -36,7 +34,7 @@
 在 DSH 的「插件 → 添加插件」中输入：
 
 ```text
-dsh-lumen-market@0.6.0
+dsh-lumen-market@0.7.1
 ```
 
 按官方管理器提示完成安装。需要支持官方插件管理器的 DeepSeek Harness；Node.js `^22.19.0 || >=24.0.0`。
@@ -46,7 +44,7 @@ dsh-lumen-market@0.6.0
 如果默认 npm 镜像尚未同步目标版本，可在官方插件管理器中使用 npm 官方源安装包链接：
 
 ```text
-https://registry.npmjs.org/dsh-lumen-market/-/dsh-lumen-market-0.6.0.tgz
+https://registry.npmjs.org/dsh-lumen-market/-/dsh-lumen-market-0.7.1.tgz
 ```
 
 ## 使用须知
