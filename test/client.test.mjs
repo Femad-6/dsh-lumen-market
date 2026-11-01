@@ -15,6 +15,98 @@ function client(fetchImpl,{cachedFetch,localStorage,browser={}}={}){
 const row={id:'npm:demo',name:'demo',source:'npm',description:'A useful plugin <img src=x onerror=alert(1)>',descriptionSource:'package.json',version:'1.0.0',validation:'bundle',compatibility:{verdict:'compatible'},links:{readme:'https://github.com/alice/demo',npm:'https://www.npmjs.com/package/demo'},installable:true}
 const response=data=>Promise.resolve(new Response(JSON.stringify(data)))
 
+test('one-click requests the official-first pipeline and preserves a known GitHub commit',async t=>{
+  let body
+  const store=client((url,init)=>{if(url.endsWith('/inspect')){body=JSON.parse(init.body);return response({previewId:'first',preview:{...row,action:'install'}})}return response({ok:true,application:'applied',rows:[]})}).createStore()
+  t.after(()=>store.dispose())
+  await store.install({...row,source:'github',repo:'alice/demo',sha:'a'.repeat(40)})
+  assert.equal(body.mode,'official-first')
+  assert.equal(body.sha,'a'.repeat(40))
+})
+
+test('fallback compatibility preview remains available until the user confirms it',async t=>{
+  const posts=[]
+  const fallback={previewId:'fallback',preview:{...row,action:'install',requiresCompatibilityConsent:true}}
+  const store=client((url,init)=>{
+    if(init.method==='POST')posts.push([url,JSON.parse(init.body)])
+    if(url.endsWith('/inspect'))return response({previewId:'official',preview:{...row,action:'install'}})
+    if(url.endsWith('/install'))return response(posts.at(-1)[1].previewId==='official'?{ok:false,application:'failed',fallbackPreview:fallback}:{ok:true,application:'applied'})
+    return response({rows:[],errors:[]})
+  }).createStore()
+  t.after(()=>store.dispose())
+  await store.install(row)
+  assert.equal(store.get().preview?.previewId,'fallback')
+  assert.equal(store.get().busy,false)
+  assert.equal(posts.filter(([url])=>url.endsWith('/install')).length,1)
+  await store.execute()
+  assert.equal(posts.at(-1)[1].previewId,'fallback')
+  assert.equal(posts.at(-1)[1].compatibilityConsent,true)
+})
+
+async function officialMarket(t,rows,remote){
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
+  const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
+  globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+  const requests=[],targets=[],entries=[],cleanups=[];let OfficialPage,dictionary
+  const module=client((url,init)=>{requests.push([url,init?.method]);if(url.includes('/detail?'))return response(rows[0]);if(url.endsWith('/inspect')||url.endsWith('/install'))throw new Error('Official handoff must not use market installation endpoints');return response({rows,errors:[]})})
+  module.apply({get:name=>name==='remote'?remote:undefined,effect(fn){const off=fn();if(typeof off==='function')cleanups.push(off)},locale:{register(ns,value){dictionary=value;return()=>{}},bind:()=>key=>dictionary.zh[key]??key},slots:{inject(owner,fn){fn()},register(info,component){entries.push(info);if(info.name==='plugins.tab')OfficialPage=component;return()=>{}}}})
+  const root=createRoot(dom.window.document.getElementById('root'))
+  t.after(async()=>{await act(async()=>root.unmount());cleanups.forEach(fn=>fn());dom.window.close();globalThis.window=previous.window;globalThis.document=previous.document;globalThis.IS_REACT_ACT_ENVIRONMENT=previous.act})
+  assert.equal(typeof OfficialPage,'function','register an official Plugins tab')
+  await act(async()=>root.render(React.createElement(OfficialPage,{install:target=>targets.push(target)})))
+  return {doc:dom.window.document,requests,targets,entries}
+}
+
+test('official Plugins tab hands a rate-limited unverified repository to the native installation dialog',async t=>{
+  const git={id:'github:Ebony-Vinyl/dsh-our-free-model',name:'Ebony-Vinyl/dsh-our-free-model',repo:'Ebony-Vinyl/dsh-our-free-model',source:'github',validation:'unverified',compatibility:{verdict:'unknown'},links:{}}
+  const {doc,targets,requests,entries}=await officialMarket(t,[git])
+  assert.ok(entries.some(e=>e.name==='plugins.tab'&&e.id==='lumen-market'&&e.label()==='流明市场'))
+  assert.equal(targets.length,0)
+  const button=[...doc.querySelectorAll('.lm-card button')].find(b=>b.textContent==='通过官方安装')
+  assert.ok(button)
+  await act(async()=>button.click())
+  assert.equal(targets.length,1)
+  assert.equal(targets[0].spec,'https://github.com/Ebony-Vinyl/dsh-our-free-model')
+  assert.equal(targets[0].title,git.name)
+  assert.equal(requests.some(([url])=>url.endsWith('/inspect')||url.endsWith('/install')),false)
+  assert.ok([...doc.querySelectorAll('button')].some(b=>b.textContent==='一键安装'))
+})
+
+test('official installation passes the exact scoped npm package and its registry',async t=>{
+  const pkg={...row,id:'npm:@ebony-vinyl/dsh-our-free-model',name:'@ebony-vinyl/dsh-our-free-model',version:'2.8.0',registry:'https://registry.npmjs.org'}
+  const {doc,targets}=await officialMarket(t,[pkg])
+  await act(async()=>[...doc.querySelectorAll('.lm-card button')].find(b=>b.textContent==='通过官方安装').click())
+  assert.equal(targets[0].spec,'@ebony-vinyl/dsh-our-free-model@2.8.0')
+  assert.equal(targets[0].registry,'https://registry.npmjs.org')
+  assert.equal(targets[0].version,'2.8.0')
+})
+
+test('official installation preserves a known GitHub commit from the detail panel',async t=>{
+  const git={...row,id:'github:alice/demo',source:'github',name:'demo',repo:'alice/demo',sha:'a'.repeat(40)}
+  const {doc,targets}=await officialMarket(t,[git])
+  await act(async()=>[...doc.querySelectorAll('.lm-card button')].find(b=>b.textContent==='查看详情').click())
+  await act(async()=>[...doc.querySelectorAll('.lm-detail button')].find(b=>b.textContent==='通过官方安装').click())
+  assert.equal(targets[0].spec,'git+https://github.com/alice/demo.git#'+'a'.repeat(40))
+})
+
+test('official handoff does not offer installed packages or malformed installation targets',async t=>{
+  const rows=[{...row,id:'npm:bad',name:'demo; --registry=bad'},{...row,id:'github:bad',source:'github',repo:'alice/demo?token=secret'},{...row,id:'npm:installed',alreadyInstalled:true}]
+  const {doc,targets}=await officialMarket(t,rows)
+  assert.equal([...doc.querySelectorAll('button')].some(b=>b.textContent==='通过官方安装'),false)
+  assert.equal(targets.length,0)
+})
+test('official manager changes refresh the market after the native installation',async t=>{
+  let changed
+  const rows=[{...row}]
+  const {doc,requests}=await officialMarket(t,rows,{$on(event,fn){assert.equal(event,'plugin-manager/changed');changed=fn;return()=>{changed=null}}})
+  assert.equal(typeof changed,'function')
+  const searches=requests.filter(([url])=>url.includes('/search?')).length
+  rows.splice(0,1)
+  await act(async()=>changed())
+  assert.ok(requests.filter(([url])=>url.includes('/search?')).length>searches)
+  assert.equal(doc.querySelectorAll('.lm-card').length,0)
+})
+
 test('slow installation exposes live logs, registry and elapsed time and retains diagnostics after failure',async t=>{
   const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'})
   const previous={window:globalThis.window,document:globalThis.document,act:globalThis.IS_REACT_ACT_ENVIRONMENT}
@@ -39,9 +131,10 @@ test('slow installation exposes live logs, registry and elapsed time and retains
   assert.ok(doc.body.textContent.includes('超过 60 秒没有新活动'))
   assert.ok(doc.body.textContent.includes('https://registry.npmmirror.com/'))
   assert.equal(doc.querySelector('script'),null)
-  await act(async()=>{finish(new Response(JSON.stringify({ok:false,application:'failed',installation:{...operation,done:true,phase:'failed'},packageResult:{kind:'network',output:'network failure'}})));await new Promise(r=>setImmediate(r))})
+  await act(async()=>{finish(new Response(JSON.stringify({ok:false,application:'failed',sourcesExhausted:true,installation:{...operation,done:true,phase:'failed'},packageResult:{kind:'network',output:'network failure'}})));await new Promise(r=>setImmediate(r))})
   assert.ok(doc.body.textContent.includes('WARN request timed out'))
   assert.ok(doc.body.textContent.includes('安装过程记录'))
+  assert.ok(doc.body.textContent.includes('已尝试所有可用安装源'))
 })
 
 test('source management imports and updates catalogs without installing a plugin',async()=>{
@@ -229,7 +322,7 @@ test('one-click install checks an unverified GitHub target and consumes only its
     finishInspect(new Response(JSON.stringify({previewId:'pinned-server-target',preview:{name:'demo',source:'github',action:'install',spec:'github:alice/demo#'+'a'.repeat(40)}})))
     await new Promise(resolve=>setImmediate(resolve))
     assert.deepEqual(posts.map(([url,body])=>[url,body]),[
-      ['/api/lumen-market/inspect',{action:'install',source:'github',name:'alice/demo',repo:'alice/demo'}],
+      ['/api/lumen-market/inspect',{action:'install',source:'github',name:'alice/demo',repo:'alice/demo',mode:'official-first'}],
       ['/api/lumen-market/install',{previewId:'pinned-server-target'}]
     ])
     assert.equal(store.get().preview,null)

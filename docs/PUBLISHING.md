@@ -1,14 +1,14 @@
 # 发布流程
 
-当前发布目标为 `dsh-lumen-market@0.6.0`。以 npm 官方源的实际版本、latest 标签和安装包校验结果判断是否已经发布；已发布版本不能覆盖。
+当前发布目标为 `dsh-lumen-market@0.8.0`。以 npm 官方源的实际版本、latest 标签和安装包校验结果判断是否已经发布；已发布版本不能覆盖。
 
 ```powershell
 npm test
 npm run check
 npm pack --ignore-scripts
 npm login --registry=https://registry.npmjs.org --auth-type=web
-npm publish .\dsh-lumen-market-0.6.0.tgz --registry=https://registry.npmjs.org --access public --tag latest --ignore-scripts
-npm view dsh-lumen-market@0.6.0 version dist.integrity --registry=https://registry.npmjs.org
+npm publish .\dsh-lumen-market-0.8.0.tgz --registry=https://registry.npmjs.org --access public --tag latest --ignore-scripts
+npm view dsh-lumen-market@0.8.0 version dist.integrity --registry=https://registry.npmjs.org
 npm view dsh-lumen-market dist-tags --json --registry=https://registry.npmjs.org
 ```
 

@@ -24,7 +24,7 @@ npm pack --dry-run
 - `lib/index.js`：Cordis host 装配。
 - `lib/host/`：profile、npm、GitHub、兼容性、市场协调和路由。
 - `lib/client.js`：通过 DSH classic module loader 装载的客户端。
-- `assets/icon.svg`：官方插件列表图标。
+- `assets/lumen-market.svg`：官方插件列表图标。
 - `test/`：离线逻辑、真实 HTTP、官方契约及 React 测试。
 
 本插件不注册模型工具，也不注入系统提示词。生产依赖只有 semver；React/jsdom/esbuild 用于开发验证。
@@ -33,13 +33,15 @@ npm pack --dry-run
 
 搜索缓存 5 分钟，保留最多 32 个查询会话；清单缓存 15 分钟，最多 500 条。注册表配置缓存 30 秒、最多 1 条，并发请求共用同一次读取，避免一页候选反复启动宿主的 pnpm 配置查询。查验 ID 有效 10 分钟、最多 200 条、单次使用。缓存只在 host 内存中。
 
-npm 完整包名优先读取清单；包不存在或不是插件时再做关键词搜索。每次最多扫描 3 页原始候选，每个查询最多扫描 500 个原始候选，筛选后的公开页最多 20 项。返回 `hasMore`、`scanned`、`scanLimited` 与 `totalExact`，不会把 npm 原始总数当成插件总数。上游空页或短页与报告总数不一致时返回 `incomplete:true`，不宣称总数确定。同一查询的并发翻页串行扫描，防止游标重复。
+npm 完整包名优先读取清单；包不存在或不是插件时再做关键词搜索。每次最多扫描 3 页原始候选，每个查询最多扫描 500 个原始候选，筛选后的公开页最多 21 项。返回 `hasMore`、`scanned`、`scanLimited` 与 `totalExact`，不会把 npm 原始总数当成插件总数。上游空页或短页与报告总数不一致时返回 `incomplete:true`，不宣称总数确定。同一查询的并发翻页串行扫描，防止游标重复。
 
 `/installed` 只读取当前 profile，本地数据可立即展示；客户端随后请求 `/updates` 补齐更新状态。强制重新检查使用 `/search?force=1` 或 `/updates?force=1`，清除相应缓存并重新读取注册表配置。后台响应、详情及安装预览按请求代次隔离，导航后忽略旧响应。
 
 GitHub 单次查验最多 12 请求，并发 3，每个请求超时 10 秒。清单最大 512 KiB，搜索响应最大 4 MiB。固定完整 SHA 后检查 package.json、patch 和必要入口文件，不执行仓库代码。
 
 执行端只接受 host 创建的 previewId，重新校验目标及当前来源后调用官方 installBundle。npm 固定确切版本；GitHub 固定完整 commit。刷新客户端不会清空 host 的 pendingRestart。
+
+新装由 `install-sources.js` 按需提供候选，默认优先 npm；跨源核对包名、版本与仓库。预览保存注册表候选，执行显式传递 registry；官方已尝试的注册表不重复请求。确认没有改变状态的网络、超时、源缺包失败才继续换源；脚本阻止、应用阶段及不确定结果停止自动重试。换源间隙保留取消能力，每次调用安装器前重读 Profile。最终复验源不可用可改用同名同版本的已核对来源；同一 GitHub commit 可在目录归档和直接仓库之间切换，目录归档内容哈希变化仍使旧预览失效。
 
 `plugin-manager/install-state` 事件按本次 requestId 匹配，仅投影阶段与注册表尝试信息，不转发任意宿主日志。客户端每 500 毫秒轮询绑定自身 previewId 的操作；结束或卸载时停止轮询。取消端接受服务器生成的 operationId，查验阶段取消会阻止安装开始，安装阶段委托官方 cancelInstall。`too-late` 不能解释为取消成功；最终文件恢复和 application 仍由官方管理器确认。
 
